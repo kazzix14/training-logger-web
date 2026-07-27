@@ -16,18 +16,58 @@ function assert(name, condition, detail = "") {
   console.error(`✗ ${name}${detail ? `\n  ${detail}` : ""}`);
 }
 
-// テンプレートの妥当性検証は Swift コア(wasm)の test-parity.mjs 側で行う。
-// ここでは構造の存在だけ確認する
-function structurallySound(name, envelope) {
-  assert(name,
-    envelope?.format === "traininglogger.program" &&
-    Array.isArray(envelope?.program?.phases) &&
-    envelope.program.phases.length > 0);
+// 完全な妥当性検証は Swift コア(wasm)の test-parity.mjs 側で行う。
+// ここではモデル操作が壊してはいけない構造不変条件だけを検査する:
+// エンベロープ形式 / phases 非空 / 各組の entries⇔targets 1:1 /
+// entry の slotIds が slots に存在 / ルールの varId が variables に存在
+function structuralIssues(envelope) {
+  const issues = [];
+  if (envelope?.format !== "traininglogger.program") issues.push("format");
+  const program = envelope?.program;
+  if (!Array.isArray(program?.phases) || program.phases.length === 0) {
+    issues.push("phases");
+    return issues;
+  }
+  const slotIds = new Set((program.slots || []).map(slot => slot.id));
+  const varIds = new Set((program.variables || []).map(v => v.id));
+  program.phases.forEach(phase => {
+    (phase.days || []).forEach(day => {
+      (day.groups || []).forEach(group => {
+        const entryIds = (group.entries || []).map(entry => entry.id);
+        (group.entries || []).forEach(entry => {
+          (entry.slotIds || []).forEach(id => {
+            if (!slotIds.has(id)) issues.push(`slot参照 ${id}`);
+          });
+        });
+        (group.setGroups || []).forEach(sg => {
+          const targetIds = (sg.targets || []).map(target => target.entryId);
+          if (entryIds.length !== targetIds.length ||
+              !entryIds.every(id => targetIds.includes(id))) {
+            issues.push(`1:1不一致 ${group.id}/${sg.id}`);
+          }
+        });
+      });
+    });
+    (phase.endRules || []).forEach(rule => {
+      const payload = Object.values(rule)[0] || {};
+      for (const key of ["varId", "weightVarId"]) {
+        if (payload[key] !== undefined && !varIds.has(payload[key])) {
+          issues.push(`変数参照 ${payload[key]}`);
+        }
+      }
+    });
+  });
+  return issues;
+}
+
+function valid(name, envelope) {
+  const issues = structuralIssues(envelope);
+  assert(name, issues.length === 0, issues.join(" / "));
 }
 
 const original = model.template("minimal");
-structurallySound("最小テンプレートが構造を持つ", original);
-structurallySound("5/3/1風テンプレートが構造を持つ", model.template("531"));
+valid("最小テンプレートが構造を持つ", original);
+valid("5/3/1風テンプレートが構造を持つ", model.template("531"));
 
 {
   const changed = model.setValue(original, ["program", "name"], "変更後");
