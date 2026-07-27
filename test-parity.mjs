@@ -72,6 +72,8 @@ if (!existsSync(wasmPath)) {
       };
     }, "ステージ"),
     fixture("measureId の同日重複", envelope => {
+      // minimal テンプレートの measureId は null のため、先に付けてから複製する
+      firstTarget(envelope).measureId = "m-dup";
       const group = firstGroup(envelope);
       const duplicate = structuredClone(group.setGroups[0]);
       duplicate.id = "sg-duplicate";
@@ -93,6 +95,7 @@ if (!existsSync(wasmPath)) {
       delete envelope.program.phases[0].days[0].pill;
     }, "キーがありません"),
     fixture("measureId のフェーズ跨ぎ再利用", envelope => {
+      firstTarget(envelope).measureId = "m-shared";
       const phase = structuredClone(envelope.program.phases[0]);
       phase.id = "phase-2";
       phase.label = "Week 2";
