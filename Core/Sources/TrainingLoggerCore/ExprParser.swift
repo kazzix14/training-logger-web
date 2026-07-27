@@ -1,10 +1,10 @@
 import Foundation
 
-struct ExprParseError: Error, Equatable, CustomStringConvertible {
-    let message: String
-    let position: Int
+public struct ExprParseError: Error, Equatable, CustomStringConvertible {
+    public let message: String
+    public let position: Int
 
-    var description: String { "\(message)（位置: \(position)）" }
+    public var description: String { "\(message)（位置: \(position)）" }
 }
 
 /// 文字列構文 → Expr。編集 UI 用の小さな構文（ADR-0016）。
@@ -26,9 +26,9 @@ struct ExprParseError: Error, Equatable, CustomStringConvertible {
 /// - `sum/avg/min/max(スコープ, 本体 [, フィルタ])`、`count(スコープ [, フィルタ])` → Fold
 ///   （第1引数が record/set/block/session/period のときのみ。スコープ名はこの位置で予約語）
 /// - それ以外は組み込み関数（abs/round/floor/ceil/min/max/e1rm_percent）
-enum ExprParser {
+public enum ExprParser {
 
-    static func parse(_ source: String) throws -> Expr {
+    public static func parse(_ source: String) throws -> Expr {
         var parser = Parser(tokens: try Lexer.tokenize(source))
         let expr = try parser.parseExpression()
         try parser.expectEnd()
