@@ -1,15 +1,19 @@
 name: Deploy GitHub Pages
+
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
 permissions:
   contents: read
   pages: write
   id-token: write
+
 concurrency:
   group: pages
   cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -20,14 +24,58 @@ jobs:
           node-version: 22
       - run: node test.mjs
       - run: node test-ui.mjs
+
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.1"
+      - name: Install the SwiftWasm SDK
+        run: >-
+          swift sdk install
+          https://github.com/swiftwasm/swift/releases/download/swift-wasm-6.1-RELEASE/swift-wasm-6.1-RELEASE-wasm32-unknown-wasi.artifactbundle.zip
+          --checksum 7550b4c77a55f4b637c376f5d192f297fe185607003a6212ad608276928db992
+      - name: Build the reactor wasm core
+        working-directory: Core
+        run: |
+          swift build -c release --product CoreWasm \
+            --swift-sdk wasm32-unknown-wasi \
+            -Xlinker --no-entry \
+            -Xlinker --export-memory \
+            -Xlinker --export-if-defined=__wasm_call_ctors \
+            -Xlinker --export=tl_alloc \
+            -Xlinker --export=tl_free \
+            -Xlinker --export=tl_validate \
+            -Xlinker --export=tl_free_result
+      - name: Stage core.wasm
+        run: |
+          wasm_path="$(find Core/.build -type f -name CoreWasm.wasm -path '*/release/*' -print -quit)"
+          test -n "$wasm_path"
+          cp "$wasm_path" core.wasm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node test-parity.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-wasm
+          path: core.wasm
+          if-no-files-found: error
+
   deploy:
-    needs: test
+    needs: [test, wasm]
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-wasm
+          path: .
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

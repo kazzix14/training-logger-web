@@ -307,6 +307,15 @@ code {
   color: var(--danger);
 }
 
+.validation-engine {
+  margin-left: 4px;
+  color: var(--weak);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .tree-scroll,
 .validation-scroll {
   min-height: 0;

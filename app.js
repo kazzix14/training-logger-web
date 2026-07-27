@@ -2,6 +2,7 @@
 // Preact + htm をローカル vendor から読み込み、ビルドなしで動作させる。
 import { Component, h, render } from "./vendor/preact.module.js";
 import htm from "./vendor/htm.module.js";
+import { validateWithWasm } from "./wasm-core.js";
 
 const html = htm.bind(h);
 const ui = globalThis.TrainingLoggerUIModel;
@@ -14,11 +15,17 @@ const {
   loadText,
   repsText,
   ruleText,
-  validate,
+  validate: validateWithJS,
 } = globalThis;
 
 const STORAGE_KEY = "traininglogger.program.builder.v1";
 const HISTORY_LIMIT = 100;
+
+function knownExerciseNames(envelope) {
+  return (envelope?.program?.slots || [])
+    .map(slot => slot.exerciseName)
+    .filter(name => typeof name === "string" && name.length > 0);
+}
 const RULE_LABELS = {
   progressIfReached: "達成で加重",
   always: "毎回加重",
@@ -265,6 +272,11 @@ class ProgramBuilder extends Component {
       jsonOpen: false,
       jsonText: JSON.stringify(initial.envelope, null, 2),
       jsonErrors: [],
+      validationErrors: safeCall(
+        () => validateWithJS(initial.envelope),
+        ["検証処理中にエラーが発生しました"],
+      ),
+      validationEngine: "js",
       templateName: "minimal",
       status: initial.status,
     };
@@ -272,6 +284,7 @@ class ProgramBuilder extends Component {
     this.lastEditTime = 0;
     this.statusTimer = null;
     this.observer = null;
+    this.validationRequest = 0;
   }
 
   loadInitialEnvelope() {
@@ -309,6 +322,7 @@ class ProgramBuilder extends Component {
     addEventListener("keydown", this.keyHandler);
     addEventListener("hashchange", this.hashHandler);
     this.refreshObserver();
+    this.refreshValidation(this.state.envelope);
   }
 
   componentDidUpdate(_previousProps, previousState) {
@@ -319,6 +333,7 @@ class ProgramBuilder extends Component {
         this.showStatus("自動保存できませんでした", "error");
       }
       document.title = `${this.state.envelope?.program?.name || "名称未設定"} — TrainingLogger`;
+      this.refreshValidation(this.state.envelope);
     }
     this.refreshObserver();
   }
@@ -327,6 +342,39 @@ class ProgramBuilder extends Component {
     removeEventListener("keydown", this.keyHandler);
     removeEventListener("hashchange", this.hashHandler);
     this.observer?.disconnect();
+    this.validationRequest += 1;
+  }
+
+  refreshValidation(envelope) {
+    const request = ++this.validationRequest;
+    const fallbackErrors = safeCall(
+      () => validateWithJS(envelope),
+      ["検証処理中にエラーが発生しました"],
+    );
+    this.setState({
+      validationErrors: fallbackErrors,
+      validationEngine: "js",
+    });
+
+    validateWithWasm(envelope, knownExerciseNames(envelope)).then(errors => {
+      if (request !== this.validationRequest || errors === null) return;
+      this.setState({
+        validationErrors: errors,
+        validationEngine: "wasm",
+      });
+    });
+  }
+
+  async validateCandidate(envelope) {
+    const wasmErrors = await validateWithWasm(
+      envelope,
+      knownExerciseNames(envelope),
+    );
+    if (wasmErrors !== null) return wasmErrors;
+    return safeCall(
+      () => validateWithJS(envelope),
+      ["検証処理中にエラーが発生しました"],
+    );
   }
 
   refreshObserver() {
@@ -385,7 +433,7 @@ class ProgramBuilder extends Component {
     this.commit(envelope, { message });
     this.setState({
       jsonText: JSON.stringify(envelope, null, 2),
-      jsonErrors: validate(envelope),
+      jsonErrors: [],
     });
   }
 
@@ -506,10 +554,10 @@ class ProgramBuilder extends Component {
     }
   }
 
-  applyJSON() {
+  async applyJSON() {
     try {
       const parsed = JSON.parse(this.state.jsonText);
-      const errors = validate(parsed);
+      const errors = await this.validateCandidate(parsed);
       if (errors.length) {
         this.setState({
           jsonText: JSON.stringify(parsed, null, 2),
@@ -1663,7 +1711,12 @@ class ProgramBuilder extends Component {
     return html`
       <aside class="validation-pane">
         <div class="pane-title">
-          <span>検証</span>
+          <span>
+            検証
+            <small class="validation-engine">
+              ${this.state.validationEngine === "wasm" ? "wasm ⚙︎" : "js"}
+            </small>
+          </span>
           <span class=${`validation-count ${errors.length ? "has-errors" : ""}`}>
             ${errors.length ? `${errors.length}件` : "OK"}
           </span>
@@ -1756,7 +1809,7 @@ class ProgramBuilder extends Component {
     const envelope = this.state.envelope;
     const candidateProgram = envelope?.program;
     const program = isRenderableProgram(candidateProgram) ? candidateProgram : null;
-    const errors = safeCall(() => validate(envelope), ["検証処理中にエラーが発生しました"]);
+    const errors = this.state.validationErrors;
     const phases = program?.phases || [];
     return html`
       <div class="app-shell">

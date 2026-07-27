@@ -11,8 +11,17 @@ let package = Package(
     products: [
         .library(
             name: "TrainingLoggerCore",
-            targets: ["TrainingLoggerCore"])
+            targets: ["TrainingLoggerCore"]
+        ),
+        .executable(
+            name: "CoreWasm",
+            targets: ["CoreWasm"]
+        ),
     ],
     targets: [
         .target(name: "TrainingLoggerCore"),
+        .executableTarget(
+            name: "CoreWasm",
+            dependencies: ["TrainingLoggerCore"]
+        ),
     ])
