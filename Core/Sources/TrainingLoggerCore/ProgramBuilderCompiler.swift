@@ -248,7 +248,7 @@ public enum ProgramBuilderCompiler {
                                         expr: e(num(lo)), upperExpr: e(num(hi)), percentExpr: nil))
             }
         }
-        return RecordPlanTpl(slotId: entry.slotId, side: nil, scheme: scheme,
+        return RecordPlanTpl(slotId: entry.slotId, side: target.side, scheme: scheme,
                              bind: bind,
                              bindFieldKey: bind != nil ? target.measureFieldKey : nil,
                              methodologyId: entry.methodologyId,
@@ -381,6 +381,9 @@ public enum ProgramBuilderCompiler {
                             stageLengths[key, default: []].insert(values.count)
                         }
                         for target in setGroup.targets {
+                            if let side = target.side, side != "left", side != "right" {
+                                issues.append(.invalidSide(entryId: target.entryId, value: side))
+                            }
                             if let measureId = target.measureId {
                                 measureIds.insert(measureId)
                                 if !dayMeasureIds.insert(measureId).inserted {

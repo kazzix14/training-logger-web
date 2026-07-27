@@ -221,9 +221,12 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
     public var measureId: String?
     /// 実測が読むフィールド。nil = 既定則(最初の Floor → scheme 先頭)。速度等は明示
     public var measureFieldKey: String?
-    /// 指示メモ(ADR-0072 追補4)。「左のみ」「膝60°で2秒ポーズ」「5km走」など、
-    /// 構造で表現できない指示を処方バナーに出す。Optional のため旧データ互換
+    /// 指示メモ(ADR-0072 追補4)。テンポ指定など、構造で表現できない指示を
+    /// 処方バナーに出す。Optional のため旧データ互換
     public var note: String?
+    /// 側性の指定(ADR-0072 追補5)。"left" / "right" / nil(両側)。
+    /// ユニラテラル種目の「左のみ」等を構造で表現する
+    public var side: String?
 
     public var id: String { entryId }
 
@@ -234,7 +237,8 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
         extras: [BuilderExtra] = [],
         measureId: String? = nil,
         measureFieldKey: String? = nil,
-        note: String? = nil
+        note: String? = nil,
+        side: String? = nil
     ) {
         self.entryId = entryId
         self.reps = reps
@@ -243,6 +247,7 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
         self.measureId = measureId
         self.measureFieldKey = measureFieldKey
         self.note = note
+        self.side = side
     }
 }
 
@@ -431,6 +436,7 @@ public enum BuilderIssue: Equatable, CustomStringConvertible {
     case duplicateMeasure(measureId: String)
     case targetMismatch(groupId: String)
     case stageLengthMismatch(stageKey: String)
+    case invalidSide(entryId: String, value: String)
     case emptyRotation(entryId: String)
     case rotationTooLong(period: Int)
 
@@ -444,6 +450,8 @@ public enum BuilderIssue: Equatable, CustomStringConvertible {
         case .duplicateMeasure(let id): return "実測マークが重複しています: \(id)"
         case .targetMismatch(let id): return "組のセット群と種目の対応が壊れています(組を編集し直してください): \(id)"
         case .stageLengthMismatch(let key): return "ステージ表の長さが揃っていません: \(key)"
+        case .invalidSide(_, let value):
+            return "側性の指定が不正です(left / right のみ): \(value)"
         case .emptyRotation(let id): return "種目のない行があります: \(id)"
         case .rotationTooLong(let period):
             return "交互種目の組み合わせが長すぎます(周期\(period)。上限は12)"
