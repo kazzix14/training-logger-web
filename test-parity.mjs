@@ -49,19 +49,19 @@ if (!existsSync(wasmPath)) {
     { name: "5/3/1風テンプレートは妥当", envelope: model.template("531") },
     fixture("percent 7500", envelope => {
       firstTarget(envelope).load.percentOfVar.percent = 7500;
-    }),
+    }, "percent"),
     fixture("固定重量 6000kg", envelope => {
       firstTarget(envelope).load = { fixed: { _0: 6000 } };
-    }),
+    }, "kg"),
     fixture("fallbackValue 600kg", envelope => {
       envelope.program.variables[0].fallbackValue = 600;
-    }),
+    }, "fallbackValue"),
     fixture("targets と entries の1:1不一致", envelope => {
       firstTarget(envelope).entryId = "unknown-entry";
-    }),
+    }, "組"),
     fixture("存在しない slotId", envelope => {
       firstGroup(envelope).entries[0].slotIds = ["unknown-slot"];
-    }),
+    }, "枠"),
     fixture("同じ stageKey の長さ不一致", envelope => {
       // ルール不要の形で再現: 同キーの count と reps で長さを変える
       firstSetGroup(envelope).count = {
@@ -70,13 +70,13 @@ if (!existsSync(wasmPath)) {
       firstTarget(envelope).reps = {
         byStage: { stageKey: "stage", values: [5, 3] },
       };
-    }),
+    }, "ステージ"),
     fixture("measureId の同日重複", envelope => {
       const group = firstGroup(envelope);
       const duplicate = structuredClone(group.setGroups[0]);
       duplicate.id = "sg-duplicate";
       group.setGroups.push(duplicate);
-    }),
+    }, "重複"),
     fixture("未定義 measureId の参照", envelope => {
       // minimal テンプレートは endRules が空なので自前でルールを追加する
       envelope.program.phases[0].endRules.push({
@@ -88,10 +88,10 @@ if (!existsSync(wasmPath)) {
           increment: 2.5,
         },
       });
-    }),
+    }, "実測"),
     fixture("必須キー day.pill の欠落", envelope => {
       delete envelope.program.phases[0].days[0].pill;
-    }),
+    }, "キーがありません"),
     fixture("measureId のフェーズ跨ぎ再利用", envelope => {
       const phase = structuredClone(envelope.program.phases[0]);
       phase.id = "phase-2";
@@ -102,19 +102,19 @@ if (!existsSync(wasmPath)) {
     }),
   ];
 
+  // JS 検証は廃止したため、wasm(Swiftコア)の結果を期待値と直接照合する。
+  // expect: null = 指摘0件 / 文字列 = その語を含む指摘が1件以上
   let failureCount = 0;
   for (const testCase of cases) {
     const knownNames = knownExerciseNames(testCase.envelope);
-    const jsIssues = logic.validate(testCase.envelope);
     const wasmIssues = validateWithWasm(testCase.envelope, knownNames);
-    const jsSummary = jsIssues.map(summarize).sort();
-    const wasmSummary = wasmIssues.map(summarize).sort();
-    const sameCount = jsIssues.length === wasmIssues.length;
-    const sameSummary =
-      JSON.stringify(jsSummary) === JSON.stringify(wasmSummary);
+    const expect = testCase.expect ?? null;
+    const ok = expect === null
+      ? wasmIssues.length === 0
+      : wasmIssues.some(issue => issue.includes(expect));
 
-    if (sameCount && sameSummary) {
-      console.log(`✓ ${testCase.name}: ${jsIssues.length}件`);
+    if (ok) {
+      console.log(`✓ ${testCase.name}: ${wasmIssues.length}件`);
       continue;
     }
 
@@ -122,17 +122,16 @@ if (!existsSync(wasmPath)) {
     console.error(
       [
         `✗ ${testCase.name}`,
-        `  JS (${jsIssues.length}): ${jsIssues.join(" / ") || "指摘なし"}`,
+        `  期待: ${expect === null ? "指摘なし" : `「${expect}」を含む指摘`}`,
         `  wasm (${wasmIssues.length}): ${wasmIssues.join(" / ") || "指摘なし"}`,
-        `  要旨 JS=${jsSummary.join(",")} wasm=${wasmSummary.join(",")}`,
       ].join("\n"),
     );
   }
 
   if (failureCount) {
-    throw new Error(`${failureCount}件の wasm / JS パリティ差異があります`);
+    throw new Error(`${failureCount}件の wasm 検証期待値との差異があります`);
   }
-  console.log(`\n${cases.length}/${cases.length} parity cases passed`);
+  console.log(`\n${cases.length}/${cases.length} wasm expectation cases passed`);
 
   function validateWithWasm(envelope, knownNames) {
     const exports = instance.exports;
@@ -165,10 +164,10 @@ if (!existsSync(wasmPath)) {
   }
 }
 
-function fixture(name, change = () => {}) {
+function fixture(name, change = () => {}, expect = null) {
   const envelope = model.template("minimal");
   change(envelope);
-  return { name, envelope };
+  return { name, envelope, expect };
 }
 
 function firstGroup(envelope) {
