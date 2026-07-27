@@ -62,12 +62,12 @@ if (!existsSync(wasmPath)) {
       firstGroup(envelope).entries[0].slotIds = ["unknown-slot"];
     }),
     fixture("同じ stageKey の長さ不一致", envelope => {
-      const phase = envelope.program.phases[0];
+      // ルール不要の形で再現: 同キーの count と reps で長さを変える
       firstSetGroup(envelope).count = {
         byStage: { stageKey: "stage", values: [5, 6, 10] },
       };
-      phase.endRules[0].progressIfReached.target = {
-        stageReps: { stageKey: "stage", values: [5, 3] },
+      firstTarget(envelope).reps = {
+        byStage: { stageKey: "stage", values: [5, 3] },
       };
     }),
     fixture("measureId の同日重複", envelope => {
@@ -77,8 +77,16 @@ if (!existsSync(wasmPath)) {
       group.setGroups.push(duplicate);
     }),
     fixture("未定義 measureId の参照", envelope => {
-      envelope.program.phases[0].endRules[0].progressIfReached.measureId =
-        "missing-measure";
+      // minimal テンプレートは endRules が空なので自前でルールを追加する
+      envelope.program.phases[0].endRules.push({
+        progressIfReached: {
+          id: "r-parity",
+          varId: envelope.program.variables[0].id,
+          measureId: "missing-measure",
+          target: { fixed: { _0: 5 } },
+          increment: 2.5,
+        },
+      });
     }),
     fixture("必須キー day.pill の欠落", envelope => {
       delete envelope.program.phases[0].days[0].pill;
