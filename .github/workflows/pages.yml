@@ -24,6 +24,7 @@ jobs:
           node-version: 22
       - run: node test.mjs
       - run: node test-ui.mjs
+      - run: node test-reader.mjs
 
   wasm:
     runs-on: ubuntu-latest

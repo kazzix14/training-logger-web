@@ -6,6 +6,7 @@ import { validateWithWasm } from "./wasm-core.js";
 
 const html = htm.bind(h);
 const ui = globalThis.TrainingLoggerUIModel;
+const reader = globalThis.TrainingLoggerReaderModel;
 const {
   b64urlDecode,
   b64urlEncode,
@@ -18,6 +19,7 @@ const {
 } = globalThis;
 
 const STORAGE_KEY = "traininglogger.program.builder.v1";
+const MODE_STORAGE_KEY = "traininglogger.program.builder.mode.v1";
 const HISTORY_LIMIT = 100;
 
 function knownExerciseNames(envelope) {
@@ -275,6 +277,7 @@ class ProgramBuilder extends Component {
       validationEngine: "loading",
       templateName: "minimal",
       status: initial.status,
+      mode: this.loadInitialMode(Boolean(location.hash.match(/^#p=/))),
     };
     this.lastEditGroup = null;
     this.lastEditTime = 0;
@@ -312,11 +315,27 @@ class ProgramBuilder extends Component {
     return { envelope: ui.template("minimal"), status: null };
   }
 
+  loadInitialMode(isSharedLink) {
+    if (isSharedLink) return "reader";
+    try {
+      return localStorage.getItem(MODE_STORAGE_KEY) === "reader"
+        ? "reader"
+        : "edit";
+    } catch {
+      return "edit";
+    }
+  }
+
   componentDidMount() {
     this.keyHandler = event => this.handleKeyDown(event);
     this.hashHandler = () => this.loadFragment();
     addEventListener("keydown", this.keyHandler);
     addEventListener("hashchange", this.hashHandler);
+    try {
+      localStorage.setItem(MODE_STORAGE_KEY, this.state.mode);
+    } catch {
+      // localStorage が無効でも表示は続行できる。
+    }
     this.refreshObserver();
     this.refreshValidation(this.state.envelope);
   }
@@ -330,6 +349,13 @@ class ProgramBuilder extends Component {
       }
       document.title = `${this.state.envelope?.program?.name || "名称未設定"} — TrainingLogger`;
       this.refreshValidation(this.state.envelope);
+    }
+    if (previousState.mode !== this.state.mode) {
+      try {
+        localStorage.setItem(MODE_STORAGE_KEY, this.state.mode);
+      } catch {
+        // モードの保存に失敗しても表示と編集は続行できる。
+      }
     }
     this.refreshObserver();
   }
@@ -390,6 +416,7 @@ class ProgramBuilder extends Component {
     try {
       const envelope = JSON.parse(b64urlDecode(match[1]));
       this.replaceEnvelope(envelope, "共有リンクから読み込みました");
+      this.setState({ mode: "reader" });
     } catch (error) {
       this.showStatus(`共有リンクを読めません: ${error.message}`, "error");
     }
@@ -399,6 +426,16 @@ class ProgramBuilder extends Component {
     clearTimeout(this.statusTimer);
     this.setState({ status: { text, kind } });
     this.statusTimer = setTimeout(() => this.setState({ status: null }), 4000);
+  }
+
+  setMode(mode, options = {}) {
+    this.setState({ mode }, () => {
+      if (!options.focusValidation) return;
+      const validation = document.querySelector(".validation-pane");
+      validation?.scrollIntoView({ behavior: "smooth", block: "start" });
+      validation?.classList.add("flash");
+      setTimeout(() => validation?.classList.remove("flash"), 900);
+    });
   }
 
   commit(nextEnvelope, options = {}) {
@@ -471,6 +508,7 @@ class ProgramBuilder extends Component {
   }
 
   handleKeyDown(event) {
+    if (this.state.mode !== "edit") return;
     if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
     if (event.target?.dataset?.jsonEditor === "true") return;
     const key = event.key.toLowerCase();
@@ -642,7 +680,8 @@ class ProgramBuilder extends Component {
     `;
   }
 
-  renderHeader(program) {
+  renderHeader(program, errors) {
+    const readerMode = this.state.mode === "reader";
     return html`
       <header class="app-header">
         <div class="brand">
@@ -653,37 +692,63 @@ class ProgramBuilder extends Component {
           </div>
         </div>
         <div class="header-actions">
+          <div class="mode-switch" role="group" aria-label="表示モード">
+            ${Button({
+              children: "閲覧",
+              className: readerMode ? "active" : "",
+              onClick: () => this.setMode("reader"),
+            })}
+            <span aria-hidden="true">⇄</span>
+            ${Button({
+              children: "編集",
+              className: readerMode ? "" : "active",
+              onClick: () => this.setMode("edit"),
+            })}
+          </div>
           ${Button({
             children: "JSONをコピー",
             className: "primary",
             onClick: () => this.copyJSON(),
           })}
           ${Button({ children: "共有リンクをコピー", onClick: () => this.copyLink() })}
-          <div class="template-control">
-            <select
-              aria-label="テンプレート"
-              value=${this.state.templateName}
-              onInput=${event => this.setState({ templateName: event.currentTarget.value })}
-            >
-              <option value="minimal">最小線形</option>
-              <option value="531">5/3/1風</option>
-            </select>
-            ${Button({ children: "挿入", onClick: () => this.insertTemplate() })}
-          </div>
-          <div class="history-actions">
-            ${IconButton({
-              icon: "↶",
-              label: "取り消し (⌘/Ctrl+Z)",
-              disabled: !this.state.past.length,
-              onClick: () => this.undo(),
-            })}
-            ${IconButton({
-              icon: "↷",
-              label: "やり直し (⌘/Ctrl+Shift+Z)",
-              disabled: !this.state.future.length,
-              onClick: () => this.redo(),
-            })}
-          </div>
+          ${readerMode && errors.length
+            ? Button({
+                children: `検証 ${errors.length}件`,
+                className: "header-validation-badge",
+                title: "編集モードの検証パネルを開く",
+                onClick: () => this.setMode("edit", { focusValidation: true }),
+              })
+            : null}
+          ${readerMode
+            ? null
+            : html`
+                <div class="template-control">
+                  <select
+                    aria-label="テンプレート"
+                    value=${this.state.templateName}
+                    onInput=${event =>
+                      this.setState({ templateName: event.currentTarget.value })}
+                  >
+                    <option value="minimal">最小線形</option>
+                    <option value="531">5/3/1風</option>
+                  </select>
+                  ${Button({ children: "挿入", onClick: () => this.insertTemplate() })}
+                </div>
+                <div class="history-actions">
+                  ${IconButton({
+                    icon: "↶",
+                    label: "取り消し (⌘/Ctrl+Z)",
+                    disabled: !this.state.past.length,
+                    onClick: () => this.undo(),
+                  })}
+                  ${IconButton({
+                    icon: "↷",
+                    label: "やり直し (⌘/Ctrl+Shift+Z)",
+                    disabled: !this.state.future.length,
+                    onClick: () => this.redo(),
+                  })}
+                </div>
+              `}
         </div>
       </header>
     `;
@@ -1698,7 +1763,209 @@ class ProgramBuilder extends Component {
     `;
   }
 
-  renderValidation(errors) {
+  renderReader(program) {
+    const view = reader.buildReaderModel(program);
+    const stats = [
+      ["フェーズ数", view.stats.phaseCount, "フェーズ"],
+      ["週日数", view.stats.weeklyDays, "日"],
+      ["種目数", view.stats.exerciseCount, "種目"],
+      ["推定セット数", view.stats.estimatedSets, "セット"],
+      ["サイクル日数", view.stats.cycleDays || "—", view.stats.cycleDays ? "日" : ""],
+    ];
+    return html`
+      <main class="reader-pane">
+        <section class="reader-hero">
+          <span class="reader-kicker">TRAINING PROGRAM</span>
+          <h1>${view.name}</h1>
+          ${view.note
+            ? html`<p class="reader-note">${view.note}</p>`
+            : html`<p class="reader-note reader-note-empty">メモはありません。</p>`}
+          <dl class="reader-stats">
+            ${stats.map(
+              ([label, value, unit]) => html`
+                <div>
+                  <dt>${label}</dt>
+                  <dd><strong>${value}</strong><span>${unit}</span></dd>
+                </div>
+              `,
+            )}
+          </dl>
+        </section>
+
+        <section class="reader-section reader-resources">
+          <div class="reader-section-heading">
+            <span class="reader-kicker">REFERENCE</span>
+            <h2>種目と基準重量</h2>
+          </div>
+          <div class="reader-resource-columns">
+            <div>
+              <h3>種目枠</h3>
+              <div class="reader-resource-grid">
+                ${view.resources.slots.map(
+                  slot => html`
+                    <article class="reader-resource-card">
+                      <span class="reader-resource-type">${slot.label}</span>
+                      <h4>${slot.exerciseName}</h4>
+                      <p><span>筋肉</span>${slot.muscles}</p>
+                      ${slot.conditionText
+                        ? html`<p><span>条件</span>${slot.conditionText}</p>`
+                        : null}
+                    </article>
+                  `,
+                )}
+                ${view.resources.slots.length
+                  ? null
+                  : html`<p class="reader-empty">種目枠はありません。</p>`}
+              </div>
+            </div>
+            <div>
+              <h3>基準重量</h3>
+              <div class="reader-resource-grid">
+                ${view.resources.variables.map(
+                  variable => html`
+                    <article class="reader-resource-card reader-variable-card">
+                      <span class="reader-resource-type">${variable.label}</span>
+                      <h4>${variable.initialValue}</h4>
+                      <p><span>由来</span>${variable.source}</p>
+                    </article>
+                  `,
+                )}
+                ${view.resources.variables.length
+                  ? null
+                  : html`<p class="reader-empty">基準重量はありません。</p>`}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        ${view.flow.length
+          ? html`
+              <section class="reader-flow" aria-label="フェーズ循環">
+                <div>
+                  <span class="reader-kicker">CYCLE</span>
+                  <h2>フェーズの循環</h2>
+                </div>
+                <ol>
+                  ${view.flow.map(
+                    (step, index) => html`
+                      <li class=${step.repeated ? "repeated" : ""}>
+                        <span>${step.repeated ? "戻る" : String(index + 1).padStart(2, "0")}</span>
+                        <strong>${step.label}</strong>
+                      </li>
+                    `,
+                  )}
+                </ol>
+              </section>
+            `
+          : null}
+
+        <div class="reader-phases">
+          ${view.phases.map(
+            (phase, phaseIndex) => html`
+              <section class="reader-phase">
+                <header class="reader-phase-heading">
+                  <div>
+                    <span class="reader-kicker">PHASE ${String(phaseIndex + 1).padStart(2, "0")}</span>
+                    <h2>${phase.label}</h2>
+                  </div>
+                  <p>
+                    <strong>${phase.windowDays ?? "—"}</strong>
+                    <span>${phase.windowDays == null ? "サイクル日数未設定" : "日サイクル"}</span>
+                  </p>
+                </header>
+                <div class="reader-days">
+                  ${phase.days.map(
+                    (day, dayIndex) => html`
+                      <article class="reader-day">
+                        <header class="reader-day-heading">
+                          <div>
+                            <span>DAY ${String(dayIndex + 1).padStart(2, "0")}</span>
+                            <h3>${day.label}</h3>
+                          </div>
+                          ${day.pill ? html`<strong>${day.pill}</strong>` : null}
+                        </header>
+                        <div class="reader-blocks">
+                          ${day.groups.map(
+                            group => html`
+                              <section class=${`reader-block ${group.isSuperset ? "superset" : ""}`}>
+                                <div class="reader-block-heading">
+                                  <span>BLOCK ${String(group.number).padStart(2, "0")}</span>
+                                  <strong>${group.isSuperset ? "SUPERSET" : "通常ブロック"}</strong>
+                                </div>
+                                ${group.setGroups.map(
+                                  setGroup => html`
+                                    <div class="reader-set-group">
+                                      ${group.setGroups.length > 1
+                                        ? html`<span class="reader-set-label">セット ${setGroup.number}</span>`
+                                        : null}
+                                      ${setGroup.prescriptions.map(
+                                        prescription => html`
+                                          <p
+                                            class=${`reader-prescription ${
+                                              prescription.measured ? "measured" : ""
+                                            }`}
+                                            dangerouslySetInnerHTML=${{
+                                              __html: previewHTML(prescription.html),
+                                            }}
+                                          ></p>
+                                        `,
+                                      )}
+                                    </div>
+                                  `,
+                                )}
+                              </section>
+                            `,
+                          )}
+                          ${day.groups.length
+                            ? null
+                            : html`<p class="reader-empty">ブロックはありません。</p>`}
+                        </div>
+                      </article>
+                    `,
+                  )}
+                  ${phase.days.length
+                    ? null
+                    : html`<p class="reader-empty">トレーニング日はありません。</p>`}
+                </div>
+                ${phase.rules.length
+                  ? html`
+                      <section class="reader-rules">
+                        <div>
+                          <span class="reader-kicker">PROGRESSION</span>
+                          <h3>進行ルール</h3>
+                        </div>
+                        <div class="reader-rule-list">
+                          ${phase.rules.map(
+                            rule => html`
+                              <article class="reader-rule">
+                                <p
+                                  dangerouslySetInnerHTML=${{
+                                    __html: previewHTML(rule.html),
+                                  }}
+                                ></p>
+                                ${rule.measureReference
+                                  ? html`
+                                      <small class=${rule.missingReference ? "missing" : ""}>
+                                        ${rule.measureReference}
+                                      </small>
+                                    `
+                                  : null}
+                              </article>
+                            `,
+                          )}
+                        </div>
+                      </section>
+                    `
+                  : null}
+              </section>
+            `,
+          )}
+        </div>
+      </main>
+    `;
+  }
+
+  renderValidation(errors, coreLoading) {
     return html`
       <aside class="validation-pane">
         <div class="pane-title">
@@ -1810,13 +2077,15 @@ class ProgramBuilder extends Component {
     const coreLoading = this.state.validationErrors === null;
     const phases = program?.phases || [];
     return html`
-      <div class="app-shell">
-        ${this.renderHeader(program)}
+      <div class=${`app-shell ${this.state.mode === "reader" ? "reader-mode" : "edit-mode"}`}>
+        ${this.renderHeader(program, errors)}
         ${this.state.status
           ? html`<div class=${`toast ${this.state.status.kind}`}>${this.state.status.text}</div>`
           : null}
         ${program
-          ? html`
+          ? this.state.mode === "reader"
+            ? this.renderReader(program)
+            : html`
               <div class="workspace">
                 ${this.renderTree(phases)}
                 <main class="editor-pane">
@@ -1847,9 +2116,9 @@ class ProgramBuilder extends Component {
                               ),
                           })}
                         </section>
-                      `}
+                  `}
                 </main>
-                ${this.renderValidation(errors)}
+                ${this.renderValidation(errors, coreLoading)}
               </div>
             `
           : html`
