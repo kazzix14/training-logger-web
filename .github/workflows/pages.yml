@@ -40,9 +40,11 @@ jobs:
       - name: Build the reactor wasm core
         working-directory: Core
         run: |
+          # crt1-reactor でリンクし、_initialize を持つ WASI reactor にする
+          # (--no-entry だけでは command 用 crt の _start が残り reactor にならない)
           swift build -c release --product CoreWasm \
             --swift-sdk wasm32-unknown-wasi \
-            -Xlinker --no-entry \
+            -Xswiftc -Xclang-linker -Xswiftc -mexec-model=reactor \
             -Xlinker --export-memory \
             -Xlinker --export-if-defined=__wasm_call_ctors \
             -Xlinker --export=tl_alloc \
