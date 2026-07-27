@@ -9,3 +9,9 @@ GitHub Pages: https://kazzix14.github.io/training-logger-web/
 - 編集後は「JSONをコピー」してアプリの「JSONを読み込む」へ貼り戻す
 
 本体リポジトリの submodule (`web/`) として管理し、push で Pages に自動デプロイされる。
+
+## 開発
+
+```sh
+node test.mjs
+```
