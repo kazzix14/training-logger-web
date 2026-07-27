@@ -15,7 +15,6 @@ const {
   loadText,
   repsText,
   ruleText,
-  validate: validateWithJS,
 } = globalThis;
 
 const STORAGE_KEY = "traininglogger.program.builder.v1";
@@ -272,11 +271,8 @@ class ProgramBuilder extends Component {
       jsonOpen: false,
       jsonText: JSON.stringify(initial.envelope, null, 2),
       jsonErrors: [],
-      validationErrors: safeCall(
-        () => validateWithJS(initial.envelope),
-        ["検証処理中にエラーが発生しました"],
-      ),
-      validationEngine: "js",
+      validationErrors: null,
+      validationEngine: "loading",
       templateName: "minimal",
       status: initial.status,
     };
@@ -346,22 +342,20 @@ class ProgramBuilder extends Component {
   }
 
   refreshValidation(envelope) {
+    // 検証は Swift コア(wasm)のみ。ロード完了までは「読み込み中」を出す
+    // (JSフォールバックは廃止 — ユーザー方針 2026-07-27)
     const request = ++this.validationRequest;
-    const fallbackErrors = safeCall(
-      () => validateWithJS(envelope),
-      ["検証処理中にエラーが発生しました"],
-    );
-    this.setState({
-      validationErrors: fallbackErrors,
-      validationEngine: "js",
-    });
-
+    this.setState({ validationErrors: null, validationEngine: "loading" });
     validateWithWasm(envelope, knownExerciseNames(envelope)).then(errors => {
-      if (request !== this.validationRequest || errors === null) return;
-      this.setState({
-        validationErrors: errors,
-        validationEngine: "wasm",
-      });
+      if (request !== this.validationRequest) return;
+      if (errors === null) {
+        this.setState({
+          validationErrors: ["Swiftコアを読み込めませんでした。再読み込みしてください"],
+          validationEngine: "error",
+        });
+        return;
+      }
+      this.setState({ validationErrors: errors, validationEngine: "wasm" });
     });
   }
 
@@ -370,11 +364,8 @@ class ProgramBuilder extends Component {
       envelope,
       knownExerciseNames(envelope),
     );
-    if (wasmErrors !== null) return wasmErrors;
-    return safeCall(
-      () => validateWithJS(envelope),
-      ["検証処理中にエラーが発生しました"],
-    );
+    return wasmErrors
+      ?? ["Swiftコアを読み込めませんでした。再読み込みしてください"];
   }
 
   refreshObserver() {
@@ -1714,14 +1705,19 @@ class ProgramBuilder extends Component {
           <span>
             検証
             <small class="validation-engine">
-              ${this.state.validationEngine === "wasm" ? "wasm ⚙︎" : "js"}
+              ${this.state.validationEngine === "wasm" ? "wasm ⚙︎"
+                : this.state.validationEngine === "error" ? "コア読込失敗"
+                : "コア読み込み中…"}
             </small>
           </span>
           <span class=${`validation-count ${errors.length ? "has-errors" : ""}`}>
-            ${errors.length ? `${errors.length}件` : "OK"}
+            ${coreLoading ? "…" : errors.length ? `${errors.length}件` : "OK"}
           </span>
         </div>
         <div class="validation-scroll">
+          ${coreLoading
+            ? html`<p class="validation-summary">Swiftコア(wasm)を読み込み中…</p>`
+            : null}
           ${errors.length
             ? html`
                 <p class="validation-summary">項目をクリックすると編集箇所へ移動します。</p>
@@ -1809,7 +1805,9 @@ class ProgramBuilder extends Component {
     const envelope = this.state.envelope;
     const candidateProgram = envelope?.program;
     const program = isRenderableProgram(candidateProgram) ? candidateProgram : null;
-    const errors = this.state.validationErrors;
+    // null = Swiftコア読み込み中(検証結果なし)
+    const errors = this.state.validationErrors ?? [];
+    const coreLoading = this.state.validationErrors === null;
     const phases = program?.phases || [];
     return html`
       <div class="app-shell">

@@ -1,7 +1,7 @@
 import model from "./ui-model.js";
 import logic from "./logic.js";
 
-const { enumCase, validate } = logic;
+const { enumCase } = logic;
 let assertions = 0;
 let failures = 0;
 
@@ -16,14 +16,18 @@ function assert(name, condition, detail = "") {
   console.error(`✗ ${name}${detail ? `\n  ${detail}` : ""}`);
 }
 
-function valid(name, envelope) {
-  const errors = validate(envelope);
-  assert(name, errors.length === 0, errors.join(" / "));
+// テンプレートの妥当性検証は Swift コア(wasm)の test-parity.mjs 側で行う。
+// ここでは構造の存在だけ確認する
+function structurallySound(name, envelope) {
+  assert(name,
+    envelope?.format === "traininglogger.program" &&
+    Array.isArray(envelope?.program?.phases) &&
+    envelope.program.phases.length > 0);
 }
 
 const original = model.template("minimal");
-valid("最小テンプレートは妥当", original);
-valid("5/3/1風テンプレートは妥当", model.template("531"));
+structurallySound("最小テンプレートが構造を持つ", original);
+structurallySound("5/3/1風テンプレートが構造を持つ", model.template("531"));
 
 {
   const changed = model.setValue(original, ["program", "name"], "変更後");

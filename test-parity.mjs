@@ -46,6 +46,7 @@ if (!existsSync(wasmPath)) {
 
   const cases = [
     fixture("妥当な最小プログラム"),
+    { name: "5/3/1風テンプレートは妥当", envelope: model.template("531") },
     fixture("percent 7500", envelope => {
       firstTarget(envelope).load.percentOfVar.percent = 7500;
     }),
