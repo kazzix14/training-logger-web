@@ -50,12 +50,22 @@ jobs:
             -Xlinker --export=tl_alloc \
             -Xlinker --export=tl_free \
             -Xlinker --export=tl_validate \
-            -Xlinker --export=tl_free_result
+            -Xlinker --export=tl_free_result \
+            -Xlinker --strip-all
+      - name: Shrink core.wasm (wasm-opt)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq binaryen || true
+          true
       - name: Stage core.wasm
         run: |
           wasm_path="$(find Core/.build -type f -name CoreWasm.wasm -path '*/release/*' -print -quit)"
           test -n "$wasm_path"
-          cp "$wasm_path" core.wasm
+          if command -v wasm-opt >/dev/null; then
+            wasm-opt -Oz "$wasm_path" -o core.wasm || cp "$wasm_path" core.wasm
+          else
+            cp "$wasm_path" core.wasm
+          fi
+          ls -la core.wasm
       - uses: actions/setup-node@v4
         with:
           node-version: 22
