@@ -1,3 +1,4 @@
+import logic from "./logic.js";
 import reader from "./reader-model.js";
 import ui from "./ui-model.js";
 
@@ -13,6 +14,39 @@ function assert(name, condition, detail = "") {
   failures += 1;
   process.exitCode = 1;
   console.error(`✗ ${name}${detail ? `\n  ${detail}` : ""}`);
+}
+
+{
+  assert(
+    "sideText は側性を日本語の接尾辞にする",
+    logic.sideText("left") === "(左)" &&
+      logic.sideText("right") === "(右)" &&
+      logic.sideText(null) === "",
+  );
+  assert("paceText は小数分を分:秒にする", logic.paceText(5.5) === "5:30/km");
+  assert("paceText は秒を0埋めする", logic.paceText(5.0) === "5:00/km");
+  assert(
+    "paceText は秒単位で四捨五入する",
+    logic.paceText(5 + 30.6 / 60) === "5:31/km",
+    logic.paceText(5 + 30.6 / 60),
+  );
+
+  const formatted = [
+    logic.extraText({ fieldKey: "rpe.rpe", kind: { exact: { _0: 8 } } }),
+    logic.extraText({ fieldKey: "rpe.rpe", kind: { range: { lo: 7, hi: 9 } } }),
+    logic.extraText({ fieldKey: "rir.rir", kind: { exact: { _0: 2 } } }),
+    logic.extraText({ fieldKey: "vbt.velocity", kind: { exact: { _0: 0.8 } } }),
+    logic.extraText({ fieldKey: "core.distance", kind: { exact: { _0: 5 } } }),
+    logic.extraText({ fieldKey: "core.pace", kind: { exact: { _0: 5.5 } } }),
+    logic.extraText({ fieldKey: "core.duration", kind: { exact: { _0: 90 } } }),
+    logic.extraText({ fieldKey: "custom.level", kind: { exact: { _0: 3 } } }),
+  ];
+  assert(
+    "extraText は fieldKey ごとの単位と未知キー末尾を整形する",
+    formatted.join("|") ===
+      "RPE8|RPE7〜9|RIR2|0.8m/s|5km|5:30/km|90秒|level 3",
+    formatted.join("|"),
+  );
 }
 
 {
@@ -54,8 +88,48 @@ function assert(name, condition, detail = "") {
   assert(
     "処方行はローテーション・セット・回数・重量・RPE・実測を一文にする",
     prescription.text ===
-      "スクワット ⇄ フロントスクワット — 3セット × 5回 @ メイン種目 TMの75% (RPE 8)〔実測〕",
+      "スクワット ⇄ フロントスクワット — 3セット × 5回 @ メイン種目 TMの75% 〔RPE8〕〔実測〕",
     prescription.text,
+  );
+}
+
+{
+  const envelope = ui.template("minimal");
+  const program = envelope.program;
+  program.slots[0].exerciseName = "ブルガリアンスクワット";
+  const group = program.phases[0].days[0].groups[0];
+  const setGroup = group.setGroups[0];
+  setGroup.count = { fixed: { _0: 3 } };
+  const target = setGroup.targets[0];
+  target.side = "left";
+  target.note = "膝60°で2秒止め";
+  target.reps = { range: { lo: 8, hi: 12 } };
+  target.load = { fixed: { _0: 30 } };
+  target.extras = [{ fieldKey: "rpe.rpe", kind: { range: { lo: 7, hi: 9 } } }];
+
+  const prescription = reader.formatPrescription(program, group, setGroup, target);
+  assert(
+    "処方行は side・整形済み extras・note を一文にする",
+    prescription.text ===
+      "ブルガリアンスクワット(左) — 3セット × 8〜12回 @ 30kg 〔RPE7〜9〕 ✎ 膝60°で2秒止め",
+    prescription.text,
+  );
+
+  program.slots[0].exerciseName = "ランニング";
+  setGroup.count = { fixed: { _0: 1 } };
+  target.side = null;
+  target.note = "ゆっくり";
+  target.reps = { fixed: { _0: 1 } };
+  target.load = null;
+  target.extras = [
+    { fieldKey: "core.distance", kind: { exact: { _0: 5 } } },
+    { fieldKey: "core.pace", kind: { exact: { _0: 5.5 } } },
+  ];
+  const running = reader.formatPrescription(program, group, setGroup, target);
+  assert(
+    "重量なしの処方行は距離・ペース・note を表示する",
+    running.text === "ランニング — 1セット × 1回 〔5km · 5:30/km〕 ✎ ゆっくり",
+    running.text,
   );
 }
 

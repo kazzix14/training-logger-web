@@ -36,6 +36,53 @@ function enumPayload(value) {
 
 // ---------- 表示テキスト ----------
 
+function sideText(side) {
+  if (side === "left") return "(左)";
+  if (side === "right") return "(右)";
+  return "";
+}
+
+function paceText(value) {
+  const totalSeconds = Math.round(Number(value) * 60);
+  if (!Number.isFinite(totalSeconds)) return `${value}/km`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}/km`;
+}
+
+function extraText(extra) {
+  const extraCase = enumCase(extra?.kind);
+  const payload = enumPayload(extra?.kind) || {};
+  const fieldKey = extra?.fieldKey || "追加指標";
+  const exact = payload._0;
+  const range = `${payload.lo}〜${payload.hi}`;
+  const value = extraCase === "exact" ? exact : extraCase === "range" ? range : "?";
+
+  switch (fieldKey) {
+    case "rpe":
+    case "rpe.rpe":
+      return `RPE${value}`;
+    case "rir":
+    case "rir.rir":
+      return `RIR${value}`;
+    case "vbt.velocity":
+      return `${value}m/s`;
+    case "core.distance":
+      return `${value}km`;
+    case "core.pace":
+      if (extraCase === "range") {
+        return `${paceText(payload.lo).replace(/\/km$/, "")}〜${paceText(payload.hi)}`;
+      }
+      return paceText(exact);
+    case "core.duration":
+      return `${value}秒`;
+    default: {
+      const label = fieldKey.split(".").pop() || fieldKey;
+      return `${label} ${value}`;
+    }
+  }
+}
+
 function repsText(reps) {
   const c = enumCase(reps);
   const p = enumPayload(reps);
@@ -103,8 +150,11 @@ if (typeof module !== "undefined") {
     countText,
     enumCase,
     enumPayload,
+    extraText,
     loadText,
+    paceText,
     repsText,
     ruleText,
+    sideText,
   };
 }

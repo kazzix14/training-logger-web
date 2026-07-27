@@ -332,7 +332,7 @@
   function addExtra(model, targetPath) {
     const next = clone(model);
     getAtPath(next, targetPath).extras.push({
-      fieldKey: "rpe",
+      fieldKey: "rpe.rpe",
       kind: enumDefault("extraKind", "exact"),
     });
     return next;

@@ -13,14 +13,29 @@ const {
   countText,
   enumCase,
   enumPayload,
+  extraText,
   loadText,
   repsText,
   ruleText,
+  sideText,
 } = globalThis;
 
 const STORAGE_KEY = "traininglogger.program.builder.v1";
 const MODE_STORAGE_KEY = "traininglogger.program.builder.mode.v1";
 const HISTORY_LIMIT = 100;
+const EXTRA_FIELD_KEYS = [
+  "rpe.rpe",
+  "rir.rir",
+  "vbt.velocity",
+  "core.distance",
+  "core.pace",
+  "core.duration",
+];
+const SIDE_LABELS = {
+  "": "両側",
+  left: "左",
+  right: "右",
+};
 
 function knownExerciseNames(envelope) {
   return (envelope?.program?.slots || [])
@@ -129,15 +144,6 @@ function previewHTML(value) {
     .replaceAll("&lt;/span&gt;", "</span>");
 }
 
-function extraText(extra) {
-  const extraCase = enumCase(extra.kind);
-  const payload = enumPayload(extra.kind) || {};
-  const label = extra.fieldKey || "追加指標";
-  if (extraCase === "exact") return `${label} ${payload._0}`;
-  if (extraCase === "range") return `${label} ${payload.lo}〜${payload.hi}`;
-  return `${label} ?`;
-}
-
 function optionsFrom(map) {
   return Object.entries(map).map(([value, label]) => html`<option value=${value}>${label}</option>`);
 }
@@ -175,6 +181,7 @@ function TextField({
   nullable = false,
   multiline = false,
   focusKey = "",
+  list = "",
 }) {
   const handleInput = event => onInput(nullable && event.currentTarget.value === "" ? null : event.currentTarget.value);
   return html`
@@ -185,6 +192,7 @@ function TextField({
             <textarea
               value=${value ?? ""}
               placeholder=${placeholder}
+              list=${list || undefined}
               data-focus=${focusKey}
               onInput=${handleInput}
             ></textarea>
@@ -1086,12 +1094,19 @@ class ProgramBuilder extends Component {
     );
     if (!payload) return fields;
 
-    if (currentCase === "fixed") {
+    if (currentCase === "fixed" || (kind === "extraKind" && currentCase === "exact")) {
       fields.push(
         NumberField({
-          label: kind === "load" ? "kg" : kind === "count" ? "セット" : "回",
+          label:
+            kind === "extraKind"
+              ? "値"
+              : kind === "load"
+                ? "kg"
+                : kind === "count"
+                  ? "セット"
+                  : "回",
           value: payload._0,
-          step: kind === "load" ? "0.5" : "1",
+          step: kind === "extraKind" ? "0.01" : kind === "load" ? "0.5" : "1",
           focusKey: `${pathKey(path)}.${currentCase}._0`,
           onInput: next => this.update([...path, currentCase, "_0"], next),
         }),
@@ -1110,12 +1125,14 @@ class ProgramBuilder extends Component {
         NumberField({
           label: "下限",
           value: payload.lo,
+          step: kind === "extraKind" ? "0.01" : "1",
           focusKey: `${pathKey(path)}.${currentCase}.lo`,
           onInput: next => this.update([...path, currentCase, "lo"], next),
         }),
         NumberField({
           label: "上限",
           value: payload.hi,
+          step: kind === "extraKind" ? "0.01" : "1",
           focusKey: `${pathKey(path)}.${currentCase}.hi`,
           onInput: next => this.update([...path, currentCase, "hi"], next),
         }),
@@ -1276,6 +1293,7 @@ class ProgramBuilder extends Component {
           label: "指標キー",
           value: extra.fieldKey,
           className: "short-field",
+          list: "extra-field-key-list",
           focusKey: `${pathKey(path)}.fieldKey`,
           onInput: value => this.update([...path, "fieldKey"], value),
         })}
@@ -1303,9 +1321,13 @@ class ProgramBuilder extends Component {
     const slotNames = slotIds.map(
       id => (program.slots || []).find(slot => slot.id === id)?.label || id,
     );
+    const extrasPreview = (target.extras || []).map(extraText).join(" · ");
+    const notePreview = typeof target.note === "string" ? target.note.trim() : "";
     const preview = `${safeCall(() => countText(setGroup.count))} × ${safeCall(() =>
       repsText(target.reps),
-    )} ・ ${safeCall(() => loadText(target.load, program.variables || []))}`;
+    )}${target.load == null ? "" : ` ・ ${safeCall(() => loadText(target.load, program.variables || []))}`}${
+      extrasPreview ? ` 〔${extrasPreview}〕` : ""
+    }${notePreview ? ` ✎ ${notePreview}` : ""}`;
     const measureFallback = `measure_${location.map(value => value + 1).join("_")}`;
     const extrasPath = [...path, "extras"];
 
@@ -1313,7 +1335,9 @@ class ProgramBuilder extends Component {
       <div class="target-row" data-model-path=${pathKey(path)}>
         <div class="target-title">
           <div>
-            <span class="entry-name">${slotNames.join(" / ") || target.entryId}</span>
+            <span class="entry-name">${slotNames.join(" / ") || target.entryId}${sideText(
+              target.side,
+            )}</span>
             <code>${target.entryId}</code>
           </div>
           <div class="prescription" dangerouslySetInnerHTML=${{ __html: previewHTML(preview) }}></div>
@@ -1327,6 +1351,25 @@ class ProgramBuilder extends Component {
             <span class="mini-label">重量</span>
             ${this.renderEnumFields("load", target.load, [...path, "load"], program)}
           </div>
+        </div>
+        <div class="target-meta-line">
+          ${SelectField({
+            label: "側",
+            value: target.side || "",
+            className: "side-field",
+            focusKey: `${pathKey(path)}.side`,
+            onInput: value => this.update([...path, "side"], value || null),
+            children: optionsFrom(SIDE_LABELS),
+          })}
+          ${TextField({
+            label: "指示メモ",
+            value: target.note,
+            nullable: true,
+            className: "note-field",
+            placeholder: "指示メモ(任意)",
+            focusKey: `${pathKey(path)}.note`,
+            onInput: value => this.update([...path, "note"], value),
+          })}
         </div>
         <div class="measure-line">
           ${Toggle({
@@ -2094,6 +2137,9 @@ class ProgramBuilder extends Component {
                   ${this.renderSlots(program)}
                   <datalist id="slot-id-list">
                     ${(program.slots || []).map(slot => html`<option value=${slot.id}></option>`)}
+                  </datalist>
+                  <datalist id="extra-field-key-list">
+                    ${EXTRA_FIELD_KEYS.map(fieldKey => html`<option value=${fieldKey}></option>`)}
                   </datalist>
                   ${phases.map((phase, phaseIndex) =>
                     this.renderPhase(program, phase, phaseIndex),

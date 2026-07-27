@@ -725,6 +725,7 @@ code {
 .count-editor,
 .enum-line,
 .enum-group,
+.target-meta-line,
 .measure-line,
 .extra-row,
 .rule-fields {
@@ -795,6 +796,20 @@ code {
 .enum-line {
   align-items: stretch;
   gap: 8px;
+}
+
+.target-meta-line {
+  margin-top: 8px;
+  align-items: flex-end;
+}
+
+.target-meta-line .side-field {
+  flex: 0 0 96px;
+}
+
+.target-meta-line .note-field {
+  min-width: 180px;
+  flex: 1;
 }
 
 .enum-group {
@@ -1296,6 +1311,7 @@ code {
   .entry-row,
   .target-title,
   .enum-line,
+  .target-meta-line,
   .measure-line {
     align-items: stretch;
     flex-direction: column;
@@ -1304,6 +1320,12 @@ code {
   .entry-row .method-field,
   .measure-field {
     width: 100%;
+  }
+
+  .target-meta-line .side-field,
+  .target-meta-line .note-field {
+    width: 100%;
+    flex: 1 1 auto;
   }
 
   .count-editor,

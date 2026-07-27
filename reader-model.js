@@ -17,9 +17,11 @@
     countText,
     enumCase,
     enumPayload,
+    extraText,
     loadText,
     repsText,
     ruleText,
+    sideText,
   } = logic;
 
   function safeText(callback, fallback) {
@@ -52,36 +54,31 @@
     return names.length ? names.join(" ⇄ ") : entry?.id || "種目未設定";
   }
 
-  function extraText(extra) {
-    const extraCase = enumCase(extra?.kind);
-    const payload = enumPayload(extra?.kind) || {};
-    const rawLabel = extra?.fieldKey || "追加指標";
-    const label = rawLabel.toLowerCase() === "rpe" ? "RPE" : rawLabel;
-    if (extraCase === "exact") return `${label} ${payload._0}`;
-    if (extraCase === "range") return `${label} ${payload.lo}〜${payload.hi}`;
-    return `${label} ?`;
-  }
-
   function formatPrescription(program, group, setGroup, target) {
     const entry = (group?.entries || []).find(item => item.id === target?.entryId);
-    const exercise = entryDisplayName(program, entry);
+    const exercise = `${entryDisplayName(program, entry)}${sideText(target?.side)}`;
     const count = safeText(() => countText(setGroup?.count), "?セット");
     const reps = safeText(() => repsText(target?.reps), "?回");
-    const load = safeText(
-      () => loadText(target?.load, program?.variables || []),
-      "?",
-    );
-    const extras = (target?.extras || []).map(extraText).join("、");
+    const load =
+      target?.load == null
+        ? ""
+        : safeText(
+            () => loadText(target.load, program?.variables || []),
+            "?",
+          );
+    const extras = (target?.extras || []).map(extraText).join(" · ");
+    const note = typeof target?.note === "string" ? target.note.trim() : "";
     const measured = Boolean(target?.measureId);
-    const html = `${exercise} — ${count} × ${reps} @ ${load}${extras ? ` (${extras})` : ""}${
-      measured ? "〔実測〕" : ""
-    }`;
+    const html = `${exercise} — ${count} × ${reps}${load ? ` @ ${load}` : ""}${
+      extras ? ` 〔${extras}〕` : ""
+    }${measured ? "〔実測〕" : ""}${note ? ` ✎ ${note}` : ""}`;
     return {
       exercise,
       count,
       reps,
       load,
       extras,
+      note,
       measured,
       measureId: target?.measureId || null,
       html,
