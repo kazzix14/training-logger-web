@@ -1,0 +1,173 @@
+:root {
+  --bg: #101012;
+  --card: #17171a;
+  --nested: #1f1f23;
+  --border: #26262b;
+  --text: #f4f4f4;
+  --sub: #cfcfcf;
+  --weak: #8a8a8a;
+  --faint: #5a5a5e;
+  --accent: #2f6bd8;
+  --danger: #e06a5e;
+  --success: #57c08a;
+  --warning: #dda63f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: rgba(16,16,18,.95);
+  backdrop-filter: blur(12px);
+  z-index: 10;
+  flex-wrap: wrap;
+}
+h1 { font-size: 17px; margin: 0; }
+h1 span { color: var(--weak); font-weight: 600; font-size: 13px; }
+h2 { font-size: 14px; margin: 0 0 8px; }
+main { max-width: 880px; margin: 0 auto; padding: 16px 16px 80px; }
+section { margin-bottom: 20px; }
+
+button {
+  background: var(--nested);
+  color: var(--sub);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+button.small { padding: 4px 10px; font-size: 11px; }
+button:active { opacity: .8; }
+
+.status {
+  margin: 10px 20px 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 13px;
+}
+.status.ok { background: #16281e; color: var(--success); }
+.status.err { background: #2a1b19; color: var(--danger); }
+.hidden { display: none !important; }
+
+#empty-state {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 18px;
+  color: var(--weak);
+}
+#empty-state h2 { color: var(--text); }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+.card h3 { margin: 0 0 8px; font-size: 13px; color: var(--weak); font-weight: 700; }
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.row label { color: var(--weak); font-size: 12px; min-width: 7em; }
+input[type="text"], input[type="number"], select {
+  background: var(--nested);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 13px;
+}
+input[type="number"] { width: 90px; }
+input.wide { width: 100%; max-width: 420px; }
+
+.phase { border-left: 3px solid var(--accent); }
+.day {
+  background: var(--nested);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 8px 0;
+}
+.day-title { font-weight: 800; font-size: 14px; margin-bottom: 6px; }
+.group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin: 6px 0;
+}
+.superset { color: var(--warning); font-size: 11px; font-weight: 700; }
+.target { margin: 6px 0; padding: 6px 0; border-top: 1px dashed var(--border); }
+.target:first-of-type { border-top: none; }
+.prescription {
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.prescription .pct { color: var(--accent); }
+.measure-chip {
+  display: inline-block;
+  background: #2a1e1c;
+  color: #e8a293;
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.rule {
+  background: var(--nested);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin: 6px 0;
+  font-size: 13px;
+}
+.rule .kind { color: var(--accent); font-weight: 800; }
+.chip {
+  display: inline-block;
+  background: var(--nested);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--sub);
+  margin: 2px 4px 2px 0;
+}
+
+#json-pane .pane-head { display: flex; align-items: center; justify-content: space-between; }
+#json-text {
+  width: 100%;
+  min-height: 260px;
+  background: var(--card);
+  color: var(--sub);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+.errors {
+  background: #2a1b19;
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  color: var(--danger);
+  font-size: 12.5px;
+}
+.errors ul { margin: 4px 0 0; padding-left: 18px; }
+.hint { color: var(--faint); font-size: 12px; }
