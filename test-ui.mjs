@@ -1,0 +1,183 @@
+import model from "./ui-model.js";
+import logic from "./logic.js";
+
+const { enumCase, validate } = logic;
+let assertions = 0;
+let failures = 0;
+
+function assert(name, condition, detail = "") {
+  assertions += 1;
+  if (condition) {
+    console.log(`✓ ${name}`);
+    return;
+  }
+  failures += 1;
+  process.exitCode = 1;
+  console.error(`✗ ${name}${detail ? `\n  ${detail}` : ""}`);
+}
+
+function valid(name, envelope) {
+  const errors = validate(envelope);
+  assert(name, errors.length === 0, errors.join(" / "));
+}
+
+const original = model.template("minimal");
+valid("最小テンプレートは妥当", original);
+valid("5/3/1風テンプレートは妥当", model.template("531"));
+
+{
+  const changed = model.setValue(original, ["program", "name"], "変更後");
+  assert("setValue は元モデルを変更しない", original.program.name !== changed.program.name);
+}
+
+{
+  const renamed = model.renameReferences(
+    original,
+    ["program", "variables", 0],
+    "renamed_tm",
+    ["varId", "weightVarId"],
+  );
+  assert(
+    "ID変更は参照先も同時に配線し直す",
+    renamed.program.phases[0].days[0].groups[0].setGroups[0].targets[0].load.percentOfVar
+      .varId === "renamed_tm",
+  );
+  valid("ID変更後も妥当", renamed);
+}
+
+{
+  const path = ["program", "phases", 0, "days"];
+  const added = model.insertItem(original, path, model.createDay(original));
+  const moved = model.moveItem(added, path, 1, -1);
+  const removed = model.removeItem(moved, path, 1);
+  assert("追加・並び替え・削除が純関数として動く", original.program.phases[0].days.length === 1);
+  assert("並び替えで順序が変わる", moved.program.phases[0].days[0].label === "新しい日");
+  assert("削除で要素数が戻る", removed.program.phases[0].days.length === 1);
+}
+
+{
+  const phasePath = ["program", "phases"];
+  const duplicated = model.duplicateStructure(original, phasePath, 0);
+  assert(
+    "複製時に構造内IDを再採番する",
+    duplicated.program.phases[0].days[0].id !== duplicated.program.phases[1].days[0].id,
+  );
+  valid("フェーズ複製後も妥当", duplicated);
+}
+
+{
+  const groupPath = ["program", "phases", 0, "days", 0, "groups", 0];
+  const withEntry = model.addEntry(original, groupPath);
+  const group = model.getAtPath(withEntry, groupPath);
+  assert("種目行追加は全セット群に target を追加する", group.setGroups[0].targets.length === 2);
+  valid("種目行追加後も entries と targets は1:1", withEntry);
+
+  const copied = model.duplicateEntry(withEntry, groupPath, 0);
+  valid("種目行複製後も entries と targets は1:1", copied);
+
+  const moved = model.moveEntry(copied, groupPath, 0, 1);
+  assert(
+    "種目行の並び替えに target が追従する",
+    model.getAtPath(moved, groupPath).entries[0].id ===
+      model.getAtPath(moved, groupPath).setGroups[0].targets[0].entryId,
+  );
+
+  const removed = model.removeEntry(moved, groupPath, 0);
+  valid("種目行削除後も entries と targets は1:1", removed);
+}
+
+{
+  const groupPath = ["program", "phases", 0, "days", 0, "groups", 0];
+  const added = model.addSetGroup(original, groupPath);
+  valid("セット群追加は全 entry の target を作る", added);
+}
+
+{
+  const targetPath = [
+    "program",
+    "phases",
+    0,
+    "days",
+    0,
+    "groups",
+    0,
+    "setGroups",
+    0,
+    "targets",
+    0,
+  ];
+  let changed = model.switchEnum(original, [...targetPath, "reps"], "reps", "range");
+  assert("reps切替で妥当な既定値を投入する", changed.program.phases[0].days[0].groups[0].setGroups[0].targets[0].reps.range.lo === 8);
+  changed = model.switchEnum(changed, [...targetPath, "load"], "load", "fixed");
+  assert("load切替で妥当な既定値を投入する", enumCase(model.getAtPath(changed, [...targetPath, "load"])) === "fixed");
+  changed = model.switchEnum(changed, [...groupPathFor(targetPath), "count"], "count", "byStage");
+  assert("count切替でステージ表を投入する", model.getAtPath(changed, [...groupPathFor(targetPath), "count"]).byStage.values.length === 3);
+  valid("enum切替後も妥当", changed);
+}
+
+{
+  const cases = {
+    reps: ["fixed", "amrap", "range", "byStage", "amrapByStage"],
+    load: ["none", "fixed", "percentOfVar", "variable"],
+    count: ["fixed", "byStage"],
+    extraKind: ["exact", "range"],
+    target: ["fixed", "stageReps"],
+  };
+  for (const [kind, enumCases] of Object.entries(cases)) {
+    for (const nextCase of enumCases) {
+      const value = model.enumDefault(kind, nextCase, {
+        variables: original.program.variables,
+      });
+      assert(
+        `${kind}.${nextCase} の既定形が完全`,
+        nextCase === "none" ? value === null : enumCase(value) === nextCase,
+      );
+    }
+  }
+}
+
+{
+  const phasePath = ["program", "phases", 0];
+  const rule = model.ruleDefault("stageDemotion", original);
+  const withRule = model.insertItem(original, [...phasePath, "endRules"], rule);
+  const switched = model.switchRule(withRule, [...phasePath, "endRules", 0], "always");
+  assert("進行ルール切替で5種それぞれの完全な形を作れる", enumCase(switched.program.phases[0].endRules[0]) === "always");
+  valid("進行ルール切替後も妥当", switched);
+}
+
+{
+  const targetPath = [
+    "program",
+    "phases",
+    0,
+    "days",
+    0,
+    "groups",
+    0,
+    "setGroups",
+    0,
+    "targets",
+    0,
+  ];
+  const measured = model.setValue(original, [...targetPath, "measureId"], "test_measure");
+  for (const ruleCase of [
+    "progressIfReached",
+    "always",
+    "progressByTable",
+    "adjustByBand",
+    "stageDemotion",
+  ]) {
+    const withRule = model.insertItem(
+      measured,
+      ["program", "phases", 0, "endRules"],
+      model.ruleDefault(ruleCase, measured),
+    );
+    valid(`進行ルール ${ruleCase} の既定形は妥当`, withRule);
+  }
+}
+
+function groupPathFor(targetPath) {
+  return targetPath.slice(0, targetPath.indexOf("setGroups") + 2);
+}
+
+console.log(`\n${assertions - failures}/${assertions} assertions passed`);

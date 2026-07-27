@@ -1,0 +1,473 @@
+import Foundation
+
+// BuilderDef → ProgramHSMDef のコンパイラ(ADR-0031)。
+// 生成する式はプリセット5本のイディオムと同形にする:
+// 重量 = round(基準 × % × 2) / 2、ステージ表 = 入れ子 if、
+// 遷移 guard は無条件(e("1"))で分岐は actions の if に寄せる。
+// 受け入れ条件はプリセット5本の同等 emit(V4RegressionTests)。
+
+public enum ProgramBuilderCompiler {
+
+    public struct Output {
+        public var hsm: ProgramHSMDef
+        public var issues: [BuilderIssue]
+
+        public init(hsm: ProgramHSMDef, issues: [BuilderIssue]) {
+            self.hsm = hsm
+            self.issues = issues
+        }
+    }
+
+    /// ローテーション展開の周期上限。現実の交互は2〜3種(2×3混在=6)で、それ以上は誤操作
+    public static let maxRotationPeriod = 12
+
+    public static func compile(_ def: BuilderDef) -> Output {
+        var issues: [BuilderIssue] = []
+        validate(def, into: &issues)
+
+        // 種目ローテーション(ADR-0032): 全ローテ長の LCM 周期でフェーズ列を展開し、
+        // k 周目のコピーでは各エントリが slotIds[k % len] を使う。エンジンは無変更
+        let period = rotationPeriod(def)
+        if period > maxRotationPeriod {
+            issues.append(.rotationTooLong(period: period))
+        }
+        let expanded = (period > 1 && period <= maxRotationPeriod)
+            ? expandRotations(def, period: period)
+            : def
+
+        let inputs = def.variables.map { variable in
+            ProgramInputDef(key: variable.id, label: variable.label, unit: variable.unit,
+                            defaultFromE1RMFactor: variable.e1rmFactor,
+                            fallbackValue: variable.fallbackValue,
+                            slotId: variable.slotId)
+        }
+        // プリセットと同じく変数は恒等 init、ステージカウンタは 0 始まり
+        var initActions = def.variables.map { VarAssign(name: $0.id, expr: e($0.id)) }
+        initActions += collectStageKeys(def).sorted().map { VarAssign(name: $0, expr: e("0")) }
+
+        let leaves = expanded.phases.enumerated().map { index, phase in
+            compileLeaf(phase,
+                        nextId: nextPhaseId(at: index, def: expanded),
+                        issues: &issues)
+        }
+        let root: PhaseDef
+        if leaves.count == 1, let only = leaves.first {
+            root = .leaf(only)
+        } else {
+            root = .composite(CompositePhaseDef(
+                id: "main",
+                children: leaves.map { .leaf($0) },
+                initial: leaves.first?.id ?? "",
+                transitions: []))
+        }
+        // 展開でコピーごとに重複した issue(superset 制約等)は1つに畳む
+        let deduped = issues.reduce(into: [BuilderIssue]()) { result, issue in
+            if !result.contains(issue) { result.append(issue) }
+        }
+        return Output(hsm: ProgramHSMDef(inputs: inputs, initActions: initActions, root: root),
+                      issues: deduped)
+    }
+
+    // MARK: - ローテーション展開(ADR-0032)
+
+    private static func rotationPeriod(_ def: BuilderDef) -> Int {
+        var period = 1
+        forEachEntry(def) { entry in
+            period = lcm(period, max(entry.slotIds.count, 1))
+        }
+        return period
+    }
+
+    /// BuilderDef → 展開済み BuilderDef の純変換。leaf id は "{id}@k"。
+    /// 明示 nextPhaseId は同一コピー内へ remap するが、後方参照(ループの巻き戻し)は
+    /// 次コピーの該当フェーズへ向ける — でないとローテーションが一生進まない
+    private static func expandRotations(_ def: BuilderDef, period: Int) -> BuilderDef {
+        let indexById = Dictionary(uniqueKeysWithValues:
+            def.phases.enumerated().map { ($0.element.id, $0.offset) })
+        var out = def
+        out.phases = (0..<period).flatMap { k -> [BuilderPhase] in
+            def.phases.enumerated().map { phaseIndex, phase in
+                var copy = phase
+                copy.id = "\(phase.id)@\(k)"
+                if let next = phase.nextPhaseId, let nextIndex = indexById[next] {
+                    let wrapsBack = nextIndex <= phaseIndex
+                    let targetCopy = wrapsBack ? (k + 1) % period : k
+                    copy.nextPhaseId = "\(next)@\(targetCopy)"
+                }
+                copy.days = phase.days.map { day in
+                    var day = day
+                    day.groups = day.groups.map { group in
+                        var group = group
+                        group.entries = group.entries.map { entry in
+                            var entry = entry
+                            if entry.slotIds.count > 1 {
+                                entry.slotIds = [entry.slotIds[k % entry.slotIds.count]]
+                            }
+                            return entry
+                        }
+                        return group
+                    }
+                    return day
+                }
+                return copy
+            }
+        }
+        return out
+    }
+
+    private static func forEachEntry(_ def: BuilderDef, _ body: (BuilderEntry) -> Void) {
+        for phase in def.phases {
+            for day in phase.days {
+                for group in day.groups {
+                    for entry in group.entries {
+                        body(entry)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func lcm(_ a: Int, _ b: Int) -> Int {
+        a / gcd(a, b) * b
+    }
+
+    private static func gcd(_ a: Int, _ b: Int) -> Int {
+        var (a, b) = (a, b)
+        while b != 0 { (a, b) = (b, a % b) }
+        return a
+    }
+
+    // MARK: - フェーズ
+
+    private static func nextPhaseId(at index: Int, def: BuilderDef) -> String {
+        let phase = def.phases[index]
+        if let next = phase.nextPhaseId { return next }
+        let nextIndex = (index + 1) % max(def.phases.count, 1)
+        return def.phases[nextIndex].id
+    }
+
+    private static func compileLeaf(_ phase: BuilderPhase,
+                                    nextId: String,
+                                    issues: inout [BuilderIssue]) -> LeafPhaseDef {
+        LeafPhaseDef(
+            id: phase.id,
+            windowDays: phase.windowDays,
+            days: phase.days.map { day in
+                DayTemplateDef(label: day.label,
+                               dayPill: day.pill,
+                               blocks: day.groups.compactMap { compileGroup($0, issues: &issues) })
+            },
+            transitions: [TransitionDef(guardExpr: e("1"),
+                                        target: nextId,
+                                        actions: phase.endRules.flatMap(compileRule))])
+    }
+
+    // MARK: - ブロック(グループ)
+
+    private static func compileGroup(_ group: BuilderGroup,
+                                     issues: inout [BuilderIssue]) -> BlockPlanTpl? {
+        guard !group.entries.isEmpty else { return nil }
+        return BlockPlanTpl(sets: group.setGroups.flatMap { compileSetGroup($0, group: group) })
+    }
+
+    // MARK: - セット群(組全体の周、ADR-0033)
+
+    /// 周のまとまり → SetPlanTpl 列。records = entries 順の targets 写像。
+    /// いずれかの target に実測があれば最終周を分離し、該当 target にだけ bind を付ける
+    /// (GZCLP の base/top 分割の一般化。単種目では従来と同一の出力)
+    private static func compileSetGroup(_ setGroup: BuilderSetGroup,
+                                        group: BuilderGroup) -> [SetPlanTpl] {
+        // entries 順に並べた (メンバー, 目標) の組。対応の壊れは validate が拾う
+        let pairs = group.entries.compactMap { entry -> (BuilderEntry, BuilderTargetLine)? in
+            setGroup.targets.first { $0.entryId == entry.id }.map { (entry, $0) }
+        }
+        guard !pairs.isEmpty else { return [] }
+
+        let hasMeasure = pairs.contains { $0.1.measureId != nil }
+        // base 周: 実測付き target の「限界まで」は最終周だけ。base は exact に降格
+        let baseRecords = pairs.map { entry, target in
+            record(for: target, entry: entry, bind: nil, demoteAmrap: target.measureId != nil)
+        }
+        guard hasMeasure else {
+            switch setGroup.count {
+            case .fixed(let n) where n <= 1:
+                return [SetPlanTpl(records: baseRecords)]
+            case .fixed(let n):
+                return [SetPlanTpl(records: baseRecords, repeatExpr: e("\(n)"))]
+            case .byStage(let key, let values):
+                return [SetPlanTpl(records: baseRecords,
+                                   repeatExpr: e(stageTable(key, values.map(Double.init))))]
+            }
+        }
+        // 実測あり: 最終周を分離(base ×(n−1) + top ×1)
+        let top = SetPlanTpl(records: pairs.map { entry, target in
+            record(for: target, entry: entry, bind: target.measureId)
+        })
+        let base = SetPlanTpl(records: baseRecords)
+        switch setGroup.count {
+        case .fixed(let n) where n <= 1:
+            return [top]
+        case .fixed(let n) where n == 2:
+            return [base, top]
+        case .fixed(let n):
+            return [SetPlanTpl(records: baseRecords, repeatExpr: e("\(n - 1)")), top]
+        case .byStage(let key, let values):
+            let baseCounts = values.map { Double(max($0 - 1, 0)) }
+            return [SetPlanTpl(records: baseRecords, repeatExpr: e(stageTable(key, baseCounts))), top]
+        }
+    }
+
+    private static func record(for target: BuilderTargetLine,
+                               entry: BuilderEntry,
+                               bind: String?,
+                               demoteAmrap: Bool = false) -> RecordPlanTpl {
+        var reps = target.reps
+        if demoteAmrap {
+            switch reps {
+            case .amrap(let min): reps = .fixed(min)
+            case .amrapByStage(let key, let values): reps = .byStage(stageKey: key, values: values)
+            default: break
+            }
+        }
+        var scheme: [SchemeTpl] = [repsScheme(reps)]
+        if let load = target.load {
+            scheme.append(loadScheme(load))
+        }
+        for extra in target.extras {
+            switch extra.kind {
+            case .exact(let value):
+                scheme.append(SchemeTpl(fieldKey: extra.fieldKey, kind: .exact,
+                                        expr: e(num(value)), upperExpr: nil, percentExpr: nil))
+            case .range(let lo, let hi):
+                scheme.append(SchemeTpl(fieldKey: extra.fieldKey, kind: .range,
+                                        expr: e(num(lo)), upperExpr: e(num(hi)), percentExpr: nil))
+            }
+        }
+        return RecordPlanTpl(slotId: entry.slotId, side: nil, scheme: scheme,
+                             bind: bind,
+                             bindFieldKey: bind != nil ? target.measureFieldKey : nil,
+                             methodologyId: entry.methodologyId)
+    }
+
+    private static func repsScheme(_ reps: BuilderReps) -> SchemeTpl {
+        switch reps {
+        case .fixed(let n):
+            return SchemeTpl(fieldKey: "core.reps", kind: .exact, expr: e("\(n)"),
+                             upperExpr: nil, percentExpr: nil)
+        case .amrap(let min):
+            return SchemeTpl(fieldKey: "core.reps", kind: .floor, expr: e("\(min)"),
+                             upperExpr: nil, percentExpr: nil)
+        case .range(let lo, let hi):
+            return SchemeTpl(fieldKey: "core.reps", kind: .range, expr: e("\(lo)"),
+                             upperExpr: e("\(hi)"), percentExpr: nil)
+        case .byStage(let key, let values):
+            return SchemeTpl(fieldKey: "core.reps", kind: .exact,
+                             expr: e(stageTable(key, values.map(Double.init))),
+                             upperExpr: nil, percentExpr: nil)
+        case .amrapByStage(let key, let values):
+            return SchemeTpl(fieldKey: "core.reps", kind: .floor,
+                             expr: e(stageTable(key, values.map(Double.init))),
+                             upperExpr: nil, percentExpr: nil)
+        }
+    }
+
+    private static func loadScheme(_ load: BuilderLoad) -> SchemeTpl {
+        switch load {
+        case .fixed(let kg):
+            return SchemeTpl(fieldKey: "core.weight", kind: .exact, expr: e(num(kg)),
+                             upperExpr: nil, percentExpr: nil)
+        case .percentOfVar(let varId, let percent, let annotate):
+            return SchemeTpl(fieldKey: "core.weight", kind: .exact,
+                             expr: e("round(\(varId) * \(num(percent)) * 2) / 2"),
+                             upperExpr: nil,
+                             percentExpr: annotate ? e(num(percent)) : nil)
+        case .variable(let varId):
+            return SchemeTpl(fieldKey: "core.weight", kind: .exact,
+                             expr: e("round(\(varId) * 2) / 2"),
+                             upperExpr: nil, percentExpr: nil)
+        }
+    }
+
+    // MARK: - 進行ルール → actions
+
+    private static func compileRule(_ rule: BuilderRule) -> [VarAssign] {
+        switch rule {
+        case .progressIfReached(_, let varId, let measureId, let target, let increment):
+            let targetExpr: String
+            switch target {
+            case .fixed(let value): targetExpr = num(value)
+            case .stageReps(let key, let values): targetExpr = stageTable(key, values)
+            }
+            return [VarAssign(name: varId,
+                              expr: e("\(varId) + if(\(measureId) >= \(targetExpr), \(num(increment)), 0)"))]
+
+        case .progressByTable(_, let varId, let measureId, let steps):
+            let sorted = steps.sorted { $0.atLeast > $1.atLeast }
+            var expr = "0"
+            for step in sorted.reversed() {
+                expr = "if(\(measureId) >= \(num(step.atLeast)), \(num(step.increment)), \(expr))"
+            }
+            return [VarAssign(name: varId, expr: e("\(varId) + \(expr)"))]
+
+        case .adjustByBand(_, let varId, let measureId, let lower, let upper, let delta):
+            return [VarAssign(name: varId, expr: e(
+                "\(varId) + if(\(measureId) > \(num(upper)), \(num(delta)), " +
+                "if(\(measureId) < \(num(lower)) && \(measureId) > 0, -\(num(delta)), 0))"))]
+
+        case .stageDemotion(_, let stageKey, let measureId, let stageTargets,
+                            let weightVarId, let resetFactor, let resetThreshold):
+            let maxStage = max(stageTargets.count - 1, 0)
+            let targetExpr = stageTable(stageKey, stageTargets)
+            return [
+                // 順序が意味を持つ: 重量リセットの判定はステージ更新より先(GZCLP と同形)
+                VarAssign(name: weightVarId, expr: e(
+                    "if(\(stageKey) == \(maxStage) && \(measureId) < \(num(resetThreshold)), " +
+                    "round(\(weightVarId) * \(num(resetFactor)) * 2) / 2, \(weightVarId))")),
+                VarAssign(name: stageKey, expr: e(
+                    "if(\(measureId) < \(targetExpr), " +
+                    "if(\(stageKey) == \(maxStage), 0, \(stageKey) + 1), \(stageKey))")),
+            ]
+
+        case .always(_, let varId, let increment):
+            return [VarAssign(name: varId, expr: e("\(varId) + \(num(increment))"))]
+        }
+    }
+
+    // MARK: - 検証
+
+    private static func validate(_ def: BuilderDef, into issues: inout [BuilderIssue]) {
+        if def.phases.isEmpty {
+            issues.append(.emptyPhases)
+        }
+        let slotIds = Set(def.slots.map(\.id))
+        let varIds = Set(def.variables.map(\.id))
+        var measureIds: Set<String> = []
+        var stageLengths: [String: Set<Int>] = [:]
+
+        for phase in def.phases {
+            for day in phase.days {
+                if day.groups.allSatisfy({ $0.entries.isEmpty }) {
+                    issues.append(.emptyDay(phase: phase.label, day: day.label))
+                }
+                // 同じ実測名を複数の「日」で使うのは正当(bind はサイクルごとにクリア。SS/GZCLP と同形)。
+                // 重複が壊すのは同一日内(後の bind が先の値を上書き)だけ
+                var dayMeasureIds: Set<String> = []
+                for group in day.groups {
+                    let entryIds = Set(group.entries.map(\.id))
+                    for entry in group.entries {
+                        if entry.slotIds.isEmpty {
+                            issues.append(.emptyRotation(entryId: entry.id))
+                        }
+                        // ローテーションの全メンバーを検証(ADR-0032)
+                        for slotId in entry.slotIds where !slotIds.contains(slotId) {
+                            issues.append(.unknownSlot(entryId: entry.id, slotId: slotId))
+                        }
+                    }
+                    for setGroup in group.setGroups {
+                        // target ↔ メンバーの対応(ADR-0033): 未知の参照・欠けを検出
+                        if setGroup.targets.contains(where: { !entryIds.contains($0.entryId) })
+                            || group.entries.contains(where: { entry in
+                                !setGroup.targets.contains { $0.entryId == entry.id }
+                            }) {
+                            issues.append(.targetMismatch(groupId: group.id))
+                        }
+                        if case .byStage(let key, let values) = setGroup.count {
+                            stageLengths[key, default: []].insert(values.count)
+                        }
+                        for target in setGroup.targets {
+                            if let measureId = target.measureId {
+                                measureIds.insert(measureId)
+                                if !dayMeasureIds.insert(measureId).inserted {
+                                    issues.append(.duplicateMeasure(measureId: measureId))
+                                }
+                            }
+                            if case .byStage(let key, let values) = target.reps {
+                                stageLengths[key, default: []].insert(values.count)
+                            }
+                            if case .amrapByStage(let key, let values) = target.reps {
+                                stageLengths[key, default: []].insert(values.count)
+                            }
+                        }
+                    }
+                }
+            }
+            for rule in phase.endRules {
+                switch rule {
+                case .progressIfReached(let id, let varId, let measureId, let target, _):
+                    if !varIds.contains(varId) { issues.append(.unknownVariable(ruleId: id, varId: varId)) }
+                    if !measureIds.contains(measureId) { issues.append(.unknownMeasure(ruleId: id, measureId: measureId)) }
+                    if case .stageReps(let key, let values) = target {
+                        stageLengths[key, default: []].insert(values.count)
+                    }
+                case .progressByTable(let id, let varId, let measureId, _),
+                     .adjustByBand(let id, let varId, let measureId, _, _, _):
+                    if !varIds.contains(varId) { issues.append(.unknownVariable(ruleId: id, varId: varId)) }
+                    if !measureIds.contains(measureId) { issues.append(.unknownMeasure(ruleId: id, measureId: measureId)) }
+                case .stageDemotion(let id, let stageKey, let measureId, let stageTargets, let weightVarId, _, _):
+                    if !varIds.contains(weightVarId) { issues.append(.unknownVariable(ruleId: id, varId: weightVarId)) }
+                    if !measureIds.contains(measureId) { issues.append(.unknownMeasure(ruleId: id, measureId: measureId)) }
+                    stageLengths[stageKey, default: []].insert(stageTargets.count)
+                case .always(let id, let varId, _):
+                    if !varIds.contains(varId) { issues.append(.unknownVariable(ruleId: id, varId: varId)) }
+                }
+            }
+        }
+        for (key, lengths) in stageLengths where lengths.count > 1 {
+            issues.append(.stageLengthMismatch(stageKey: key))
+        }
+    }
+
+    /// ステージ変数: セット群のステージ表と降格ルールから収集(ユーザーは意識しない)
+    private static func collectStageKeys(_ def: BuilderDef) -> Set<String> {
+        var keys: Set<String> = []
+        for phase in def.phases {
+            for day in phase.days {
+                for group in day.groups {
+                    for setGroup in group.setGroups {
+                        if case .byStage(let key, _) = setGroup.count { keys.insert(key) }
+                        for target in setGroup.targets {
+                            if case .byStage(let key, _) = target.reps { keys.insert(key) }
+                            if case .amrapByStage(let key, _) = target.reps { keys.insert(key) }
+                        }
+                    }
+                }
+            }
+            for rule in phase.endRules {
+                if case .stageDemotion(_, let stageKey, _, _, _, _, _) = rule { keys.insert(stageKey) }
+                if case .progressIfReached(_, _, _, .stageReps(let key, _), _) = rule { keys.insert(key) }
+            }
+        }
+        return keys
+    }
+
+    // MARK: - 式の道具
+
+    /// ステージ表 → 入れ子 if(GZCLP のイディオム): [a,b,c] = if(s==0, a, if(s==1, b, c))
+    private static func stageTable(_ stageKey: String, _ values: [Double]) -> String {
+        guard let last = values.last else { return "0" }
+        guard values.count > 1 else { return num(last) }
+        var expr = num(last)
+        for (index, value) in values.enumerated().dropLast().reversed() {
+            expr = "if(\(stageKey) == \(index), \(num(value)), \(expr))"
+        }
+        return expr
+    }
+
+    /// 数値の最小表記("5" / "2.5"。整数は小数点を出さない)
+    private static func num(_ value: Double) -> String {
+        if value == value.rounded(), abs(value) < 1e12 {
+            return String(Int(value))
+        }
+        return "\(value)"
+    }
+
+    /// 静的文字列の Expr。パース失敗はコンパイラのバグ(テストで全式を検証)
+    private static func e(_ source: String) -> Expr {
+        do {
+            return try ExprParser.parse(source)
+        } catch {
+            assertionFailure("ビルダー式のパース失敗: \(source) — \(error)")
+            return .lit(0)
+        }
+    }
+}

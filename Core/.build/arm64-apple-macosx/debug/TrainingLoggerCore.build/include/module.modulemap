@@ -1,0 +1,3 @@
+module TrainingLoggerCore {
+    header "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/include/TrainingLoggerCore-Swift.h"
+}

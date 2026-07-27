@@ -19,6 +19,7 @@ jobs:
         with:
           node-version: 22
       - run: node test.mjs
+      - run: node test-ui.mjs
   deploy:
     needs: test
     environment:

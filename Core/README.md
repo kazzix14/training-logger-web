@@ -1,0 +1,3 @@
+# TrainingLoggerCore
+
+TrainingLoggerのiOSアプリとWebAssembly版で共有する、プログラムビルダーのデータモデル・検証・コンパイル処理を提供するSwiftPMパッケージです。親アプリのADR-0074に基づいています。

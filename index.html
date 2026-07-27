@@ -1,49 +1,17 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TrainingLogger プログラムビルダー</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>TrainingLogger プログラムビルダー</title>
+  <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<header>
-  <h1>TrainingLogger <span>プログラムリーダー・ビルダー</span></h1>
-  <div class="header-actions">
-    <button id="btn-copy" class="primary">JSONをコピー</button>
-    <button id="btn-link">共有リンクをコピー</button>
-  </div>
-</header>
-
-<div id="status" class="status hidden"></div>
-
-<main>
-  <section id="empty-state">
-    <h2>プログラムを読み込む</h2>
-    <p>アプリの「Webで開く」から開くと自動で読み込まれます。
-       または traininglogger.program v1 の JSON を下に貼り付けてください。</p>
-  </section>
-
-  <section id="editor" class="hidden"></section>
-
-  <section id="json-pane">
-    <div class="pane-head">
-      <h2>JSON</h2>
-      <div>
-        <button id="btn-format">整形</button>
-        <button id="btn-apply" class="primary">検証して反映</button>
-      </div>
-    </div>
-    <div id="errors" class="errors hidden"></div>
-    <textarea id="json-text" spellcheck="false"
-      placeholder='{"format": "traininglogger.program", "version": 1, "program": { ... }}'></textarea>
-    <p class="hint">構造の追加・削除(day や group を増やす等)はこの JSON を直接編集して
-      「検証して反映」。上のフォームの編集は自動でここへ反映されます。
-      アプリへ戻すときは「JSONをコピー」→ アプリの「JSONを読み込む」へ貼り付け。</p>
-  </section>
-</main>
-
-<script src="logic.js"></script>
-<script src="app.js"></script>
+  <div id="app"></div>
+  <noscript>このプログラムビルダーを使うには JavaScript を有効にしてください。</noscript>
+  <script src="./logic.js"></script>
+  <script src="./ui-model.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

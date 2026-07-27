@@ -1,0 +1,40 @@
+{
+  "": {
+    "swift-dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/primary.swiftdeps"
+  },
+  "/Users/kazuma/dev/training-logger/web/Core/Sources/TrainingLoggerCore/Expr.swift": {
+    "dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/Expr.d",
+    "object": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/Expr.swift.o",
+    "swiftmodule": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/Expr~partial.swiftmodule",
+    "swift-dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/Expr.swiftdeps",
+    "diagnostics": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/Expr.dia"
+  },
+  "/Users/kazuma/dev/training-logger/web/Core/Sources/TrainingLoggerCore/ExprParser.swift": {
+    "dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ExprParser.d",
+    "object": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ExprParser.swift.o",
+    "swiftmodule": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ExprParser~partial.swiftmodule",
+    "swift-dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ExprParser.swiftdeps",
+    "diagnostics": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ExprParser.dia"
+  },
+  "/Users/kazuma/dev/training-logger/web/Core/Sources/TrainingLoggerCore/ProgramBuilder.swift": {
+    "dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilder.d",
+    "object": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilder.swift.o",
+    "swiftmodule": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilder~partial.swiftmodule",
+    "swift-dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilder.swiftdeps",
+    "diagnostics": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilder.dia"
+  },
+  "/Users/kazuma/dev/training-logger/web/Core/Sources/TrainingLoggerCore/ProgramBuilderCompiler.swift": {
+    "dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilderCompiler.d",
+    "object": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilderCompiler.swift.o",
+    "swiftmodule": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilderCompiler~partial.swiftmodule",
+    "swift-dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilderCompiler.swiftdeps",
+    "diagnostics": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramBuilderCompiler.dia"
+  },
+  "/Users/kazuma/dev/training-logger/web/Core/Sources/TrainingLoggerCore/ProgramHSMDef.swift": {
+    "dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramHSMDef.d",
+    "object": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramHSMDef.swift.o",
+    "swiftmodule": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramHSMDef~partial.swiftmodule",
+    "swift-dependencies": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramHSMDef.swiftdeps",
+    "diagnostics": "/Users/kazuma/dev/training-logger/web/Core/.build/arm64-apple-macosx/debug/TrainingLoggerCore.build/ProgramHSMDef.dia"
+  }
+}
