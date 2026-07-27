@@ -216,15 +216,19 @@ public struct RecordPlanTpl: Codable, Equatable, Sendable {
     public var bindFieldKey: String?
     /// 表示用: この処方行の体系（体系チップ・カタログ可視性の分類 fact）
     public var methodologyId: String?
+    /// 指示メモ(ADR-0072 追補4)。処方バナーに表示する自由文
+    public var noteText: String?
 
     public init(slotId: String, side: String?, scheme: [SchemeTpl], bind: String?,
-                bindFieldKey: String? = nil, methodologyId: String?) {
+                bindFieldKey: String? = nil, methodologyId: String?,
+                noteText: String? = nil) {
         self.slotId = slotId
         self.side = side
         self.scheme = scheme
         self.bind = bind
         self.bindFieldKey = bindFieldKey
         self.methodologyId = methodologyId
+        self.noteText = noteText
     }
 }
 

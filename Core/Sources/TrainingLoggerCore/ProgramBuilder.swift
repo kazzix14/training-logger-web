@@ -221,6 +221,9 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
     public var measureId: String?
     /// 実測が読むフィールド。nil = 既定則(最初の Floor → scheme 先頭)。速度等は明示
     public var measureFieldKey: String?
+    /// 指示メモ(ADR-0072 追補4)。「左のみ」「膝60°で2秒ポーズ」「5km走」など、
+    /// 構造で表現できない指示を処方バナーに出す。Optional のため旧データ互換
+    public var note: String?
 
     public var id: String { entryId }
 
@@ -230,7 +233,8 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
         load: BuilderLoad? = nil,
         extras: [BuilderExtra] = [],
         measureId: String? = nil,
-        measureFieldKey: String? = nil
+        measureFieldKey: String? = nil,
+        note: String? = nil
     ) {
         self.entryId = entryId
         self.reps = reps
@@ -238,6 +242,7 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
         self.extras = extras
         self.measureId = measureId
         self.measureFieldKey = measureFieldKey
+        self.note = note
     }
 }
 

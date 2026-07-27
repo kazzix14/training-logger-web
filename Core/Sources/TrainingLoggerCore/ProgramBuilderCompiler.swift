@@ -217,6 +217,11 @@ public enum ProgramBuilderCompiler {
         }
     }
 
+    private static func normalizedNote(_ note: String?) -> String? {
+        let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty ?? true) ? nil : trimmed
+    }
+
     private static func record(for target: BuilderTargetLine,
                                entry: BuilderEntry,
                                bind: String?,
@@ -246,7 +251,8 @@ public enum ProgramBuilderCompiler {
         return RecordPlanTpl(slotId: entry.slotId, side: nil, scheme: scheme,
                              bind: bind,
                              bindFieldKey: bind != nil ? target.measureFieldKey : nil,
-                             methodologyId: entry.methodologyId)
+                             methodologyId: entry.methodologyId,
+                             noteText: normalizedNote(target.note))
     }
 
     private static func repsScheme(_ reps: BuilderReps) -> SchemeTpl {
