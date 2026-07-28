@@ -521,9 +521,10 @@ function createEntry(model, slotId) {
         note: "",
         variables: [
           {
-            id: "main_tm",
-            label: "メイン種目 TM",
-            unit: "kg",
+          id: "main_tm",
+          label: "メイン種目 TM",
+          dimension: "load",
+          unit: "kg",
             e1rmFactor: null,
             fallbackValue: 60,
             slotId: "main",

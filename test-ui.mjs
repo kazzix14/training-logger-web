@@ -68,6 +68,13 @@ function valid(name, envelope) {
 const original = model.template("minimal");
 valid("最小テンプレートが構造を持つ", original);
 assert(
+  "組み込みテンプレートの変数はdimensionを明示する",
+  original.program.variables.every(variable => variable.dimension === "load") &&
+    model
+      .template("531")
+      .program.variables.every(variable => variable.dimension === "load")
+);
+assert(
   "種目枠の型条件は未指定が既定",
   original.program.slots[0].activityRequirement === null,
 );
