@@ -961,6 +961,8 @@ class ProgramBuilder extends Component {
         <div class="compact-list">
           ${(program.slots || []).map((slot, index) => {
             const path = [...slotsPath, index];
+            const activityKind =
+              slot.activityRequirement?.fact?._0?.kind?._0 || "";
             return html`
               <div class="resource-row" data-model-path=${pathKey(path)}>
                 <div class="resource-main slots-grid">
@@ -1013,6 +1015,33 @@ class ProgramBuilder extends Component {
                     placeholder: "例: 脚のコンパウンド種目",
                     focusKey: `${pathKey(path)}.conditionText`,
                     onInput: value => this.update([...path, "conditionText"], value),
+                  })}
+                  ${SelectField({
+                    label: "種目タイプ",
+                    value: activityKind,
+                    focusKey: `${pathKey(path)}.activityRequirement`,
+                    onInput: value =>
+                      this.update(
+                        [...path, "activityRequirement"],
+                        value
+                          ? { fact: { _0: { kind: { _0: value } } } }
+                          : null,
+                      ),
+                    children: [
+                      html`<option value="">指定なし</option>`,
+                      html`<option value="strength">筋トレ</option>`,
+                      html`<option value="running">ランニング</option>`,
+                      html`<option value="cycling">サイクリング</option>`,
+                    ],
+                  })}
+                  ${TextField({
+                    label: "重複禁止グループ",
+                    value: slot.distinctGroup,
+                    nullable: true,
+                    placeholder: "例: vertical_pull",
+                    focusKey: `${pathKey(path)}.distinctGroup`,
+                    onInput: value =>
+                      this.update([...path, "distinctGroup"], value),
                   })}
                 </div>
                 ${this.structureActions(slotsPath, index, "種目枠")}

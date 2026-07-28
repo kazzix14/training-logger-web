@@ -64,6 +64,9 @@ public struct BuilderSlot: Codable, Equatable, Identifiable {
     public var exerciseName: String?   // 表示・seed 照合用(uuid 優先)
     public var muscleKeys: [String] = []
     public var conditionText: String = ""
+    /// v2の型付き条件木。nilの間だけlegacy muscleKeysを使う。
+    public var activityRequirement: ActivityRequirement?
+    public var distinctGroup: String?
 
     public init(
         id: String,
@@ -71,7 +74,9 @@ public struct BuilderSlot: Codable, Equatable, Identifiable {
         exerciseUuid: String? = nil,
         exerciseName: String? = nil,
         muscleKeys: [String] = [],
-        conditionText: String = ""
+        conditionText: String = "",
+        activityRequirement: ActivityRequirement? = nil,
+        distinctGroup: String? = nil
     ) {
         self.id = id
         self.label = label
@@ -79,6 +84,8 @@ public struct BuilderSlot: Codable, Equatable, Identifiable {
         self.exerciseName = exerciseName
         self.muscleKeys = muscleKeys
         self.conditionText = conditionText
+        self.activityRequirement = activityRequirement
+        self.distinctGroup = distinctGroup
     }
 }
 

@@ -204,6 +204,8 @@
       exerciseName: null,
       muscleKeys: [],
       conditionText: "",
+      activityRequirement: null,
+      distinctGroup: null,
     };
   }
 
@@ -443,6 +445,8 @@
             exerciseName: null,
             muscleKeys: [],
             conditionText: "",
+            activityRequirement: null,
+            distinctGroup: null,
           },
         ],
         phases: [],

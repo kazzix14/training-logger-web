@@ -67,6 +67,14 @@ function valid(name, envelope) {
 
 const original = model.template("minimal");
 valid("最小テンプレートが構造を持つ", original);
+assert(
+  "種目枠の型条件は未指定が既定",
+  original.program.slots[0].activityRequirement === null,
+);
+assert(
+  "種目枠の重複禁止グループは未指定が既定",
+  original.program.slots[0].distinctGroup === null,
+);
 valid("5/3/1風テンプレートが構造を持つ", model.template("531"));
 
 {

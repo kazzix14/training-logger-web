@@ -318,6 +318,27 @@ public indirect enum ActivityRequirement: Codable, Equatable, Sendable {
             fact.matches(facts)
         }
     }
+
+    /// 条件木が一意に要求する種目タイプ。複数タイプを許すanyやnotではnil。
+    public var requiredKind: ActivityKind? {
+        switch self {
+        case .fact(.kind(let kind)):
+            return kind
+        case .fact:
+            return nil
+        case .not:
+            return nil
+        case .all(let children):
+            let kinds = Set(children.compactMap(\.requiredKind))
+            return kinds.count == 1 ? kinds.first : nil
+        case .any(let children):
+            let kinds = children.map(\.requiredKind)
+            guard !kinds.isEmpty, kinds.allSatisfy({ $0 == kinds.first! }) else {
+                return nil
+            }
+            return kinds.first!
+        }
+    }
 }
 
 public enum ActivityReference: Codable, Equatable, Sendable {

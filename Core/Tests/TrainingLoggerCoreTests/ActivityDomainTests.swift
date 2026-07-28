@@ -85,6 +85,7 @@ final class ActivityDomainTests: XCTestCase {
             tagIDs: ["indoor"]
         )))
         XCTAssertFalse(requirement.matches(ActivityFacts(kind: .strength)))
+        XCTAssertEqual(requirement.requiredKind, .running)
     }
 
     func testEffectiveLoadSupportsAssistance() {
@@ -117,4 +118,3 @@ final class ActivityDomainTests: XCTestCase {
         XCTAssertEqual(decoded.bundledActivities?.first?.name, "ランニング")
     }
 }
-
