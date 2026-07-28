@@ -234,6 +234,8 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
     /// 側性の指定(ADR-0072 追補5)。"left" / "right" / nil(両側)。
     /// ユニラテラル種目の「左のみ」等を構造で表現する
     public var side: String?
+    /// Strength以外を含む種目タイプ固有の処方。nilなら従来schemeを使う。
+    public var activityPrescription: ActivityPrescriptionPayload?
 
     public var id: String { entryId }
 
@@ -245,7 +247,8 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
         measureId: String? = nil,
         measureFieldKey: String? = nil,
         note: String? = nil,
-        side: String? = nil
+        side: String? = nil,
+        activityPrescription: ActivityPrescriptionPayload? = nil
     ) {
         self.entryId = entryId
         self.reps = reps
@@ -255,6 +258,7 @@ public struct BuilderTargetLine: Codable, Equatable, Identifiable {
         self.measureFieldKey = measureFieldKey
         self.note = note
         self.side = side
+        self.activityPrescription = activityPrescription
     }
 }
 
@@ -446,6 +450,13 @@ public enum BuilderIssue: Equatable, CustomStringConvertible {
     case invalidSide(entryId: String, value: String)
     case emptyRotation(entryId: String)
     case rotationTooLong(period: Int)
+    case mixedActivityKinds(entryId: String)
+    case missingActivityPrescription(entryId: String, expected: ActivityKind)
+    case activityPrescriptionMismatch(
+        entryId: String,
+        expected: ActivityKind,
+        actual: ActivityKind
+    )
 
     public var description: String {
         switch self {
@@ -462,6 +473,12 @@ public enum BuilderIssue: Equatable, CustomStringConvertible {
         case .emptyRotation(let id): return "種目のない行があります: \(id)"
         case .rotationTooLong(let period):
             return "交互種目の組み合わせが長すぎます(周期\(period)。上限は12)"
+        case .mixedActivityKinds(let entryId):
+            return "ローテーション内の種目タイプが揃っていません: \(entryId)"
+        case .missingActivityPrescription(let entryId, let expected):
+            return "\(expected.rawValue)の型付き処方がありません: \(entryId)"
+        case .activityPrescriptionMismatch(let entryId, let expected, let actual):
+            return "種目タイプと処方タイプが一致しません: \(entryId)（\(expected.rawValue) / \(actual.rawValue)）"
         }
     }
 }

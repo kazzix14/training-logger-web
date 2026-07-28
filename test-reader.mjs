@@ -136,6 +136,47 @@ function assert(name, condition, detail = "") {
 {
   const envelope = ui.template("minimal");
   const program = envelope.program;
+  program.slots[0].exerciseName = "ランニング";
+  const group = program.phases[0].days[0].groups[0];
+  const setGroup = group.setGroups[0];
+  setGroup.count = { fixed: { _0: 1 } };
+  const target = setGroup.targets[0];
+  target.activityPrescription = {
+    running: {
+      _0: {
+        distance: {
+          exact: { _0: { value: 5, unit: "kilometers" } },
+        },
+        duration: {
+          exact: { _0: { value: 25, unit: "minutes" } },
+        },
+        pace: {
+          absolute: {
+            _0: {
+              exact: {
+                _0: { value: 300, unit: "secondsPerKilometer" },
+              },
+            },
+          },
+        },
+        derivedField: "duration",
+        targetRPE: null,
+        workoutLabel: "テンポ",
+      },
+    },
+  };
+
+  const running = reader.formatPrescription(program, group, setGroup, target);
+  assert(
+    "型付きランニング処方は距離・時間・ペースを表示する",
+    running.text === "ランニング — 1セット × テンポ · 5km · 25分 · 5:00/km",
+    running.text,
+  );
+}
+
+{
+  const envelope = ui.template("minimal");
+  const program = envelope.program;
   program.slots[0].exerciseName = "スクワット";
   const target =
     program.phases[0].days[0].groups[0].setGroups[0].targets[0];

@@ -386,6 +386,8 @@ public struct RunningPrescription: Codable, Equatable, Sendable {
     public var distance: QuantityTarget?
     public var duration: QuantityTarget?
     public var pace: PacePrescription
+    /// distance / duration / pace のうち、他の2値から導出したフィールド。
+    public var derivedField: RunningDerivedField?
     public var targetRPE: QuantityTarget?
     public var workoutLabel: String?
 
@@ -393,12 +395,14 @@ public struct RunningPrescription: Codable, Equatable, Sendable {
         distance: QuantityTarget? = nil,
         duration: QuantityTarget? = nil,
         pace: PacePrescription = .open,
+        derivedField: RunningDerivedField? = nil,
         targetRPE: QuantityTarget? = nil,
         workoutLabel: String? = nil
     ) {
         self.distance = distance
         self.duration = duration
         self.pace = pace
+        self.derivedField = derivedField
         self.targetRPE = targetRPE
         self.workoutLabel = workoutLabel
     }
@@ -408,17 +412,20 @@ public struct CyclingPrescription: Codable, Equatable, Sendable {
     public var distance: QuantityTarget?
     public var duration: QuantityTarget?
     public var speed: QuantityTarget?
+    public var derivedField: CyclingDerivedField?
     public var targetRPE: QuantityTarget?
 
     public init(
         distance: QuantityTarget? = nil,
         duration: QuantityTarget? = nil,
         speed: QuantityTarget? = nil,
+        derivedField: CyclingDerivedField? = nil,
         targetRPE: QuantityTarget? = nil
     ) {
         self.distance = distance
         self.duration = duration
         self.speed = speed
+        self.derivedField = derivedField
         self.targetRPE = targetRPE
     }
 }
@@ -472,6 +479,12 @@ public enum RunningDerivedField: String, Codable, Sendable {
     case pace
 }
 
+public enum CyclingDerivedField: String, Codable, Sendable {
+    case distance
+    case duration
+    case speed
+}
+
 public struct RunningResult: Codable, Equatable, Sendable {
     public var distance: TypedQuantity?
     public var duration: TypedQuantity?
@@ -501,6 +514,7 @@ public struct CyclingResult: Codable, Equatable, Sendable {
     public var distance: TypedQuantity?
     public var duration: TypedQuantity?
     public var speed: TypedQuantity?
+    public var derivedField: CyclingDerivedField?
     public var rpe: Double?
     public var customMetrics: [CustomMetricValue]
 
@@ -508,12 +522,14 @@ public struct CyclingResult: Codable, Equatable, Sendable {
         distance: TypedQuantity? = nil,
         duration: TypedQuantity? = nil,
         speed: TypedQuantity? = nil,
+        derivedField: CyclingDerivedField? = nil,
         rpe: Double? = nil,
         customMetrics: [CustomMetricValue] = []
     ) {
         self.distance = distance
         self.duration = duration
         self.speed = speed
+        self.derivedField = derivedField
         self.rpe = rpe
         self.customMetrics = customMetrics
     }
@@ -657,6 +673,272 @@ public enum ActivityMath {
         )
     }
 
+    /// 編集した値を入力値として確定し、残る手入力値との2値から3つ目を導出する。
+    /// derivedField は再編集時に「入力」と「計算値」を混同しないための provenance。
+    public static func reconcile(
+        _ source: RunningPrescription,
+        edited: RunningDerivedField
+    ) -> RunningPrescription {
+        var value = source
+        clearDerivedField(&value, except: edited)
+        guard runningPrescriptionValue(value, field: edited) != nil else {
+            value.derivedField = nil
+            return value
+        }
+
+        switch edited {
+        case .distance:
+            if let distance = value.distance?.representativeValue,
+               let duration = value.duration?.representativeValue,
+               distance.baseValue > 0 {
+                value.pace = .absolute(.exact(.init(
+                    duration.baseValue / distance.baseValue * 1_000,
+                    unit: .secondsPerKilometer
+                )))
+                value.derivedField = .pace
+            } else if let distance = value.distance?.representativeValue,
+                      let pace = absolutePace(value.pace) {
+                value.duration = .exact(.init(
+                    distance.baseValue * pace.baseValue,
+                    unit: .seconds
+                ))
+                value.derivedField = .duration
+            }
+        case .duration:
+            if let duration = value.duration?.representativeValue,
+               let distance = value.distance?.representativeValue,
+               distance.baseValue > 0 {
+                value.pace = .absolute(.exact(.init(
+                    duration.baseValue / distance.baseValue * 1_000,
+                    unit: .secondsPerKilometer
+                )))
+                value.derivedField = .pace
+            } else if let duration = value.duration?.representativeValue,
+                      let pace = absolutePace(value.pace),
+                      pace.baseValue > 0 {
+                value.distance = .exact(.init(
+                    duration.baseValue / pace.baseValue,
+                    unit: .meters
+                ))
+                value.derivedField = .distance
+            }
+        case .pace:
+            guard let pace = absolutePace(value.pace), pace.baseValue > 0 else {
+                return value
+            }
+            if let distance = value.distance?.representativeValue {
+                value.duration = .exact(.init(
+                    distance.baseValue * pace.baseValue,
+                    unit: .seconds
+                ))
+                value.derivedField = .duration
+            } else if let duration = value.duration?.representativeValue {
+                value.distance = .exact(.init(
+                    duration.baseValue / pace.baseValue,
+                    unit: .meters
+                ))
+                value.derivedField = .distance
+            }
+        }
+        return value
+    }
+
+    public static func reconcile(
+        _ source: RunningResult,
+        edited: RunningDerivedField
+    ) -> RunningResult {
+        var value = source
+        clearDerivedField(&value, except: edited)
+        guard runningResultValue(value, field: edited) != nil else {
+            value.derivedField = nil
+            return value
+        }
+
+        switch edited {
+        case .distance:
+            if let distance = value.distance,
+               let duration = value.duration,
+               distance.baseValue > 0 {
+                value.pace = .init(
+                    duration.baseValue / distance.baseValue * 1_000,
+                    unit: .secondsPerKilometer
+                )
+                value.derivedField = .pace
+            } else if let distance = value.distance, let pace = value.pace {
+                value.duration = .init(
+                    distance.baseValue * pace.baseValue,
+                    unit: .seconds
+                )
+                value.derivedField = .duration
+            }
+        case .duration:
+            if let duration = value.duration,
+               let distance = value.distance,
+               distance.baseValue > 0 {
+                value.pace = .init(
+                    duration.baseValue / distance.baseValue * 1_000,
+                    unit: .secondsPerKilometer
+                )
+                value.derivedField = .pace
+            } else if let duration = value.duration,
+                      let pace = value.pace,
+                      pace.baseValue > 0 {
+                value.distance = .init(
+                    duration.baseValue / pace.baseValue,
+                    unit: .meters
+                )
+                value.derivedField = .distance
+            }
+        case .pace:
+            guard let pace = value.pace, pace.baseValue > 0 else { return value }
+            if let distance = value.distance {
+                value.duration = .init(
+                    distance.baseValue * pace.baseValue,
+                    unit: .seconds
+                )
+                value.derivedField = .duration
+            } else if let duration = value.duration {
+                value.distance = .init(
+                    duration.baseValue / pace.baseValue,
+                    unit: .meters
+                )
+                value.derivedField = .distance
+            }
+        }
+        return value
+    }
+
+    public static func reconcile(
+        _ source: CyclingPrescription,
+        edited: CyclingDerivedField
+    ) -> CyclingPrescription {
+        var value = source
+        clearDerivedField(&value, except: edited)
+        guard cyclingPrescriptionValue(value, field: edited) != nil else {
+            value.derivedField = nil
+            return value
+        }
+        switch edited {
+        case .distance:
+            if let distance = value.distance?.representativeValue,
+               let duration = value.duration?.representativeValue,
+               duration.baseValue > 0 {
+                value.speed = .exact(.init(
+                    distance.baseValue / duration.baseValue * 3.6,
+                    unit: .kilometersPerHour
+                ))
+                value.derivedField = .speed
+            } else if let distance = value.distance?.representativeValue,
+                      let speed = value.speed?.representativeValue,
+                      speed.baseValue > 0 {
+                value.duration = .exact(.init(
+                    distance.baseValue / speed.baseValue,
+                    unit: .seconds
+                ))
+                value.derivedField = .duration
+            }
+        case .duration:
+            if let duration = value.duration?.representativeValue,
+               let distance = value.distance?.representativeValue,
+               duration.baseValue > 0 {
+                value.speed = .exact(.init(
+                    distance.baseValue / duration.baseValue * 3.6,
+                    unit: .kilometersPerHour
+                ))
+                value.derivedField = .speed
+            } else if let duration = value.duration?.representativeValue,
+                      let speed = value.speed?.representativeValue {
+                value.distance = .exact(.init(
+                    duration.baseValue * speed.baseValue,
+                    unit: .meters
+                ))
+                value.derivedField = .distance
+            }
+        case .speed:
+            guard let speed = value.speed?.representativeValue, speed.baseValue > 0 else {
+                return value
+            }
+            if let distance = value.distance?.representativeValue {
+                value.duration = .exact(.init(
+                    distance.baseValue / speed.baseValue,
+                    unit: .seconds
+                ))
+                value.derivedField = .duration
+            } else if let duration = value.duration?.representativeValue {
+                value.distance = .exact(.init(
+                    duration.baseValue * speed.baseValue,
+                    unit: .meters
+                ))
+                value.derivedField = .distance
+            }
+        }
+        return value
+    }
+
+    public static func reconcile(
+        _ source: CyclingResult,
+        edited: CyclingDerivedField
+    ) -> CyclingResult {
+        var value = source
+        clearDerivedField(&value, except: edited)
+        guard cyclingResultValue(value, field: edited) != nil else {
+            value.derivedField = nil
+            return value
+        }
+        switch edited {
+        case .distance:
+            if let distance = value.distance,
+               let duration = value.duration,
+               duration.baseValue > 0 {
+                value.speed = .init(
+                    distance.baseValue / duration.baseValue * 3.6,
+                    unit: .kilometersPerHour
+                )
+                value.derivedField = .speed
+            } else if let distance = value.distance,
+                      let speed = value.speed,
+                      speed.baseValue > 0 {
+                value.duration = .init(
+                    distance.baseValue / speed.baseValue,
+                    unit: .seconds
+                )
+                value.derivedField = .duration
+            }
+        case .duration:
+            if let duration = value.duration,
+               let distance = value.distance,
+               duration.baseValue > 0 {
+                value.speed = .init(
+                    distance.baseValue / duration.baseValue * 3.6,
+                    unit: .kilometersPerHour
+                )
+                value.derivedField = .speed
+            } else if let duration = value.duration, let speed = value.speed {
+                value.distance = .init(
+                    duration.baseValue * speed.baseValue,
+                    unit: .meters
+                )
+                value.derivedField = .distance
+            }
+        case .speed:
+            guard let speed = value.speed, speed.baseValue > 0 else { return value }
+            if let distance = value.distance {
+                value.duration = .init(
+                    distance.baseValue / speed.baseValue,
+                    unit: .seconds
+                )
+                value.derivedField = .duration
+            } else if let duration = value.duration {
+                value.distance = .init(
+                    duration.baseValue * speed.baseValue,
+                    unit: .meters
+                )
+                value.derivedField = .distance
+            }
+        }
+        return value
+    }
+
     public static func effectiveLoad(
         enteredLoadKilograms: Double,
         bodyweightKilograms: Double?,
@@ -664,6 +946,119 @@ public enum ActivityMath {
     ) -> Double? {
         guard bodyweightFraction == 0 || bodyweightKilograms != nil else { return nil }
         return enteredLoadKilograms + (bodyweightKilograms ?? 0) * bodyweightFraction
+    }
+
+    private static func clearDerivedField(
+        _ value: inout RunningPrescription,
+        except edited: RunningDerivedField
+    ) {
+        guard let derived = value.derivedField, derived != edited else {
+            value.derivedField = nil
+            return
+        }
+        switch derived {
+        case .distance: value.distance = nil
+        case .duration: value.duration = nil
+        case .pace: value.pace = .open
+        }
+        value.derivedField = nil
+    }
+
+    private static func clearDerivedField(
+        _ value: inout RunningResult,
+        except edited: RunningDerivedField
+    ) {
+        guard let derived = value.derivedField, derived != edited else {
+            value.derivedField = nil
+            return
+        }
+        switch derived {
+        case .distance: value.distance = nil
+        case .duration: value.duration = nil
+        case .pace: value.pace = nil
+        }
+        value.derivedField = nil
+    }
+
+    private static func clearDerivedField(
+        _ value: inout CyclingPrescription,
+        except edited: CyclingDerivedField
+    ) {
+        guard let derived = value.derivedField, derived != edited else {
+            value.derivedField = nil
+            return
+        }
+        switch derived {
+        case .distance: value.distance = nil
+        case .duration: value.duration = nil
+        case .speed: value.speed = nil
+        }
+        value.derivedField = nil
+    }
+
+    private static func clearDerivedField(
+        _ value: inout CyclingResult,
+        except edited: CyclingDerivedField
+    ) {
+        guard let derived = value.derivedField, derived != edited else {
+            value.derivedField = nil
+            return
+        }
+        switch derived {
+        case .distance: value.distance = nil
+        case .duration: value.duration = nil
+        case .speed: value.speed = nil
+        }
+        value.derivedField = nil
+    }
+
+    private static func runningPrescriptionValue(
+        _ value: RunningPrescription,
+        field: RunningDerivedField
+    ) -> TypedQuantity? {
+        switch field {
+        case .distance: value.distance?.representativeValue
+        case .duration: value.duration?.representativeValue
+        case .pace: absolutePace(value.pace)
+        }
+    }
+
+    private static func runningResultValue(
+        _ value: RunningResult,
+        field: RunningDerivedField
+    ) -> TypedQuantity? {
+        switch field {
+        case .distance: value.distance
+        case .duration: value.duration
+        case .pace: value.pace
+        }
+    }
+
+    private static func cyclingPrescriptionValue(
+        _ value: CyclingPrescription,
+        field: CyclingDerivedField
+    ) -> TypedQuantity? {
+        switch field {
+        case .distance: value.distance?.representativeValue
+        case .duration: value.duration?.representativeValue
+        case .speed: value.speed?.representativeValue
+        }
+    }
+
+    private static func cyclingResultValue(
+        _ value: CyclingResult,
+        field: CyclingDerivedField
+    ) -> TypedQuantity? {
+        switch field {
+        case .distance: value.distance
+        case .duration: value.duration
+        case .speed: value.speed
+        }
+    }
+
+    private static func absolutePace(_ value: PacePrescription) -> TypedQuantity? {
+        guard case .absolute(let target) = value else { return nil }
+        return target.representativeValue
     }
 
     private static func resolvePace(

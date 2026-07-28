@@ -217,6 +217,7 @@
       extras: [],
       measureId: null,
       measureFieldKey: null,
+      activityPrescription: null,
     };
   }
 

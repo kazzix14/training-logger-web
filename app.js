@@ -37,6 +37,127 @@ const SIDE_LABELS = {
   right: "右",
 };
 
+function activityPrescriptionKind(activity) {
+  return activity && typeof activity === "object"
+    ? Object.keys(activity)[0] || ""
+    : "";
+}
+
+function exactQuantity(value, unit) {
+  return value == null
+    ? null
+    : { exact: { _0: { value: Number(value), unit } } };
+}
+
+function exactQuantityValue(target) {
+  const value = Number(target?.exact?._0?.value);
+  return Number.isFinite(value) ? value : null;
+}
+
+function defaultActivityPrescription(kind) {
+  if (kind === "running") {
+    return {
+      running: {
+        _0: {
+          distance: null,
+          duration: null,
+          pace: { open: {} },
+          derivedField: null,
+          targetRPE: null,
+          workoutLabel: null,
+        },
+      },
+    };
+  }
+  if (kind === "cycling") {
+    return {
+      cycling: {
+        _0: {
+          distance: null,
+          duration: null,
+          speed: null,
+          derivedField: null,
+          targetRPE: null,
+        },
+      },
+    };
+  }
+  if (kind === "strength") {
+    return {
+      strength: {
+        _0: {
+          load: { open: {} },
+          repetitions: { open: {} },
+          targetRPE: null,
+        },
+      },
+    };
+  }
+  return null;
+}
+
+function updateEndurancePrescription(activity, field, displayValue) {
+  const kind = activityPrescriptionKind(activity);
+  if (kind !== "running" && kind !== "cycling") return activity;
+  const next = JSON.parse(JSON.stringify(activity));
+  const value = next[kind]._0;
+  const previousDerived = value.derivedField;
+  if (previousDerived && previousDerived !== field) {
+    if (previousDerived === "pace") value.pace = { open: {} };
+    else value[previousDerived] = null;
+  }
+  value.derivedField = null;
+
+  if (field === "distance") {
+    value.distance = exactQuantity(displayValue, "kilometers");
+  } else if (field === "duration") {
+    value.duration = exactQuantity(displayValue, "minutes");
+  } else if (field === "pace") {
+    value.pace =
+      displayValue == null
+        ? { open: {} }
+        : {
+            absolute: {
+              _0: exactQuantity(displayValue * 60, "secondsPerKilometer"),
+            },
+          };
+  } else if (field === "speed") {
+    value.speed = exactQuantity(displayValue, "kilometersPerHour");
+  }
+  if (displayValue == null) return next;
+
+  const distance = exactQuantityValue(value.distance);
+  const duration = exactQuantityValue(value.duration);
+  const pace = exactQuantityValue(value.pace?.absolute?._0);
+  const speed = exactQuantityValue(value.speed);
+  if (kind === "running") {
+    if ((field === "distance" || field === "duration") && distance && duration) {
+      value.pace = {
+        absolute: {
+          _0: exactQuantity((duration / distance) * 60, "secondsPerKilometer"),
+        },
+      };
+      value.derivedField = "pace";
+    } else if ((field === "distance" || field === "pace") && distance && pace) {
+      value.duration = exactQuantity((distance * pace) / 60, "minutes");
+      value.derivedField = "duration";
+    } else if ((field === "duration" || field === "pace") && duration && pace) {
+      value.distance = exactQuantity((duration * 60) / pace, "kilometers");
+      value.derivedField = "distance";
+    }
+  } else if ((field === "distance" || field === "duration") && distance && duration) {
+    value.speed = exactQuantity(distance / (duration / 60), "kilometersPerHour");
+    value.derivedField = "speed";
+  } else if ((field === "distance" || field === "speed") && distance && speed) {
+    value.duration = exactQuantity((distance / speed) * 60, "minutes");
+    value.derivedField = "duration";
+  } else if ((field === "duration" || field === "speed") && duration && speed) {
+    value.distance = exactQuantity(speed * (duration / 60), "kilometers");
+    value.derivedField = "distance";
+  }
+  return next;
+}
+
 function knownExerciseNames(envelope) {
   return (envelope?.program?.slots || [])
     .map(slot => slot.exerciseName)
@@ -1352,11 +1473,15 @@ class ProgramBuilder extends Component {
     );
     const extrasPreview = (target.extras || []).map(extraText).join(" · ");
     const notePreview = typeof target.note === "string" ? target.note.trim() : "";
-    const preview = `${safeCall(() => countText(setGroup.count))} × ${safeCall(() =>
-      repsText(target.reps),
-    )}${target.load == null ? "" : ` ・ ${safeCall(() => loadText(target.load, program.variables || []))}`}${
-      extrasPreview ? ` 〔${extrasPreview}〕` : ""
-    }${notePreview ? ` ✎ ${notePreview}` : ""}`;
+    const activityKind = activityPrescriptionKind(target.activityPrescription);
+    const activityValue = target.activityPrescription?.[activityKind]?._0 || {};
+    const preview = activityKind
+      ? reader.formatPrescription(program, group, setGroup, target).text
+      : `${safeCall(() => countText(setGroup.count))} × ${safeCall(() =>
+          repsText(target.reps),
+        )}${target.load == null ? "" : ` ・ ${safeCall(() => loadText(target.load, program.variables || []))}`}${
+          extrasPreview ? ` 〔${extrasPreview}〕` : ""
+        }${notePreview ? ` ✎ ${notePreview}` : ""}`;
     const measureFallback = `measure_${location.map(value => value + 1).join("_")}`;
     const extrasPath = [...path, "extras"];
 
@@ -1370,6 +1495,104 @@ class ProgramBuilder extends Component {
             <code>${target.entryId}</code>
           </div>
           <div class="prescription" dangerouslySetInnerHTML=${{ __html: previewHTML(preview) }}></div>
+        </div>
+        <div class="target-meta-line">
+          ${SelectField({
+            label: "型付き処方",
+            value: activityKind,
+            focusKey: `${pathKey(path)}.activityPrescription`,
+            onInput: value =>
+              this.update(
+                [...path, "activityPrescription"],
+                defaultActivityPrescription(value),
+              ),
+            children: [
+              html`<option value="">Strengthの回数・重量を使う</option>`,
+              html`<option value="running">ランニング</option>`,
+              html`<option value="cycling">サイクリング</option>`,
+              html`<option value="strength">Strength payload</option>`,
+            ],
+          })}
+          ${activityKind === "running" || activityKind === "cycling"
+            ? [
+                NumberField({
+                  label: "距離 km",
+                  value: exactQuantityValue(activityValue.distance),
+                  nullable: true,
+                  step: "0.1",
+                  min: "0",
+                  focusKey: `${pathKey(path)}.activityDistance`,
+                  onInput: value =>
+                    this.update(
+                      [...path, "activityPrescription"],
+                      updateEndurancePrescription(
+                        target.activityPrescription,
+                        "distance",
+                        value,
+                      ),
+                    ),
+                }),
+                NumberField({
+                  label: "時間 分",
+                  value: exactQuantityValue(activityValue.duration),
+                  nullable: true,
+                  step: "0.1",
+                  min: "0",
+                  focusKey: `${pathKey(path)}.activityDuration`,
+                  onInput: value =>
+                    this.update(
+                      [...path, "activityPrescription"],
+                      updateEndurancePrescription(
+                        target.activityPrescription,
+                        "duration",
+                        value,
+                      ),
+                    ),
+                }),
+                activityKind === "running"
+                  ? NumberField({
+                      label: "ペース 分/km",
+                      value:
+                        exactQuantityValue(
+                          activityValue.pace?.absolute?._0,
+                        ) == null
+                          ? null
+                          : exactQuantityValue(
+                              activityValue.pace?.absolute?._0,
+                            ) / 60,
+                      nullable: true,
+                      step: "0.05",
+                      min: "0",
+                      focusKey: `${pathKey(path)}.activityPace`,
+                      onInput: value =>
+                        this.update(
+                          [...path, "activityPrescription"],
+                          updateEndurancePrescription(
+                            target.activityPrescription,
+                            "pace",
+                            value,
+                          ),
+                        ),
+                    })
+                  : NumberField({
+                      label: "速度 km/h",
+                      value: exactQuantityValue(activityValue.speed),
+                      nullable: true,
+                      step: "0.1",
+                      min: "0",
+                      focusKey: `${pathKey(path)}.activitySpeed`,
+                      onInput: value =>
+                        this.update(
+                          [...path, "activityPrescription"],
+                          updateEndurancePrescription(
+                            target.activityPrescription,
+                            "speed",
+                            value,
+                          ),
+                        ),
+                    }),
+              ]
+            : null}
         </div>
         <div class="enum-line">
           <div class="enum-group">

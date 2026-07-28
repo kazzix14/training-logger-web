@@ -102,6 +102,12 @@ public enum CoreValidation {
 
     public static func plausibilityFindings(_ def: BuilderDef) -> [String] {
         var findings: [String] = []
+        var slotKinds: [String: ActivityKind] = [:]
+        for slot in def.slots {
+            if let kind = slot.activityRequirement?.requiredKind {
+                slotKinds[slot.id] = kind
+            }
+        }
         func checkWeight(_ value: Double, _ label: String) {
             if !(value > 0 && value <= 500) {
                 findings.append("\(label): \(value)kg（0超〜500kgの範囲外）")
@@ -131,6 +137,25 @@ public enum CoreValidation {
                             case .variable, .none:
                                 break
                             }
+                            if let prescription = target.activityPrescription {
+                                findings.append(contentsOf: prescriptionFindings(
+                                    prescription,
+                                    label: "\(day.label) の型付き処方"
+                                ))
+                                if let entry = group.entries.first(
+                                    where: { $0.id == target.entryId }
+                                ) {
+                                    let expected = Set(
+                                        entry.slotIds.compactMap { slotKinds[$0] }
+                                    )
+                                    if expected.count == 1,
+                                       expected.first != prescription.kind {
+                                        findings.append(
+                                            "\(day.label) の処方タイプが種目枠と一致しません"
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -153,6 +178,52 @@ public enum CoreValidation {
                     }
                 }
             }
+        }
+        return findings
+    }
+
+    private static func prescriptionFindings(
+        _ prescription: ActivityPrescriptionPayload,
+        label: String
+    ) -> [String] {
+        var findings: [String] = []
+        func require(
+            _ target: QuantityTarget?,
+            _ dimension: QuantityDimension,
+            _ field: String
+        ) {
+            guard let target else { return }
+            let dimensions: [QuantityDimension]
+            switch target {
+            case .exact(let value):
+                dimensions = [value.dimension]
+            case .range(let lower, let upper):
+                dimensions = [lower.dimension, upper.dimension]
+            case .open:
+                dimensions = []
+            }
+            if dimensions.contains(where: { $0 != dimension }) {
+                findings.append("\(label)の\(field)は\(dimension.rawValue)単位が必要です")
+            }
+        }
+
+        switch prescription {
+        case .strength(let value):
+            require(value.load, .load, "重量")
+            require(value.repetitions, .count, "回数")
+            require(value.targetRPE, .effort, "RPE")
+        case .running(let value):
+            require(value.distance, .distance, "距離")
+            require(value.duration, .duration, "時間")
+            if case .absolute(let pace) = value.pace {
+                require(pace, .pace, "ペース")
+            }
+            require(value.targetRPE, .effort, "RPE")
+        case .cycling(let value):
+            require(value.distance, .distance, "距離")
+            require(value.duration, .duration, "時間")
+            require(value.speed, .speed, "速度")
+            require(value.targetRPE, .effort, "RPE")
         }
         return findings
     }

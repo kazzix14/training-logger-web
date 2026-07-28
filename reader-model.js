@@ -54,10 +54,89 @@
     return names.length ? names.join(" ⇄ ") : entry?.id || "種目未設定";
   }
 
+  function typedQuantity(target) {
+    if (!target || typeof target !== "object") return null;
+    if (target.exact?._0) return target.exact._0;
+    if (target.range?.lower && target.range?.upper) {
+      return { range: [target.range.lower, target.range.upper] };
+    }
+    return null;
+  }
+
+  function convertQuantity(quantity, dimension) {
+    if (!quantity || quantity.range) return null;
+    const value = Number(quantity.value);
+    if (!Number.isFinite(value)) return null;
+    switch (dimension) {
+      case "distance":
+        if (quantity.unit === "meters") return value / 1000;
+        if (quantity.unit === "miles") return value * 1.609344;
+        return value;
+      case "duration":
+        if (quantity.unit === "seconds") return value / 60;
+        if (quantity.unit === "hours") return value * 60;
+        return value;
+      case "pace":
+        if (quantity.unit === "minutesPerKilometer") return value * 60;
+        if (quantity.unit === "secondsPerMile") return value / 1.609344;
+        return value;
+      case "speed":
+        if (quantity.unit === "metersPerSecond") return value * 3.6;
+        return value;
+      default:
+        return value;
+    }
+  }
+
+  function clockText(seconds) {
+    const rounded = Math.max(0, Math.round(seconds));
+    return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
+  }
+
+  function activityPrescriptionText(activity) {
+    if (!activity || typeof activity !== "object") return "";
+    const kind = Object.keys(activity)[0];
+    const value = activity[kind]?._0;
+    if (!value) return "";
+    const parts = [];
+    if (kind === "running" && value.workoutLabel) parts.push(value.workoutLabel);
+    const distance = convertQuantity(typedQuantity(value.distance), "distance");
+    const duration = convertQuantity(typedQuantity(value.duration), "duration");
+    if (distance != null) parts.push(`${Number(distance.toFixed(2))}km`);
+    if (duration != null) parts.push(`${Number(duration.toFixed(1))}分`);
+    if (kind === "running") {
+      const paceTarget = value.pace?.absolute?._0;
+      const pace = convertQuantity(typedQuantity(paceTarget), "pace");
+      if (pace != null) parts.push(`${clockText(pace)}/km`);
+    } else if (kind === "cycling") {
+      const speed = convertQuantity(typedQuantity(value.speed), "speed");
+      if (speed != null) parts.push(`${Number(speed.toFixed(1))}km/h`);
+    }
+    const rpe = convertQuantity(typedQuantity(value.targetRPE), "effort");
+    if (rpe != null) parts.push(`RPE ${rpe}`);
+    return parts.join(" · ");
+  }
+
   function formatPrescription(program, group, setGroup, target) {
     const entry = (group?.entries || []).find(item => item.id === target?.entryId);
     const exercise = `${entryDisplayName(program, entry)}${sideText(target?.side)}`;
     const count = safeText(() => countText(setGroup?.count), "?セット");
+    const typed = activityPrescriptionText(target?.activityPrescription);
+    if (typed) {
+      const html = `${exercise} — ${count} × ${typed}`;
+      return {
+        exercise,
+        count,
+        reps: typed,
+        load: "",
+        extras: "",
+        note: "",
+        measured: false,
+        measureId: null,
+        html,
+        text: stripHTML(html),
+      };
+    }
     const reps = safeText(() => repsText(target?.reps), "?回");
     const load =
       target?.load == null

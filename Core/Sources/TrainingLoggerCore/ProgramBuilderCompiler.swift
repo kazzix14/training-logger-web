@@ -252,7 +252,8 @@ public enum ProgramBuilderCompiler {
                              bind: bind,
                              bindFieldKey: bind != nil ? target.measureFieldKey : nil,
                              methodologyId: entry.methodologyId,
-                             noteText: normalizedNote(target.note))
+                             noteText: normalizedNote(target.note),
+                             activityPrescription: target.activityPrescription)
     }
 
     private static func repsScheme(_ reps: BuilderReps) -> SchemeTpl {
@@ -346,6 +347,11 @@ public enum ProgramBuilderCompiler {
             issues.append(.emptyPhases)
         }
         let slotIds = Set(def.slots.map(\.id))
+        var slotKindByID: [String: ActivityKind] = [:]
+        for slot in def.slots {
+            slotKindByID[slot.id] =
+                slot.activityRequirement?.requiredKind ?? .strength
+        }
         let varIds = Set(def.variables.map(\.id))
         var measureIds: Set<String> = []
         var stageLengths: [String: Set<Int>] = [:]
@@ -381,6 +387,32 @@ public enum ProgramBuilderCompiler {
                             stageLengths[key, default: []].insert(values.count)
                         }
                         for target in setGroup.targets {
+                            if let entry = group.entries.first(
+                                where: { $0.id == target.entryId }
+                            ) {
+                                let kinds = Set(
+                                    entry.slotIds.compactMap { slotKindByID[$0] }
+                                )
+                                if kinds.count > 1 {
+                                    issues.append(.mixedActivityKinds(entryId: entry.id))
+                                } else {
+                                    let expected = kinds.first ?? .strength
+                                    if let actual = target.activityPrescription?.kind,
+                                       actual != expected {
+                                        issues.append(.activityPrescriptionMismatch(
+                                            entryId: entry.id,
+                                            expected: expected,
+                                            actual: actual
+                                        ))
+                                    } else if expected != .strength,
+                                              target.activityPrescription == nil {
+                                        issues.append(.missingActivityPrescription(
+                                            entryId: entry.id,
+                                            expected: expected
+                                        ))
+                                    }
+                                }
+                            }
                             if let side = target.side, side != "left", side != "right" {
                                 issues.append(.invalidSide(entryId: target.entryId, value: side))
                             }

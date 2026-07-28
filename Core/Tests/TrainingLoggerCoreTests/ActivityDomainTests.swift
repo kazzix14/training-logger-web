@@ -17,6 +17,57 @@ final class ActivityDomainTests: XCTestCase {
         XCTAssertEqual(decoded, metric)
     }
 
+    func testRunningPrescriptionDerivesDurationAndRetainsProvenance() {
+        var prescription = RunningPrescription(
+            distance: .exact(.init(10, unit: .kilometers))
+        )
+        prescription.pace = .absolute(
+            .exact(.init(300, unit: .secondsPerKilometer))
+        )
+
+        let reconciled = ActivityMath.reconcile(prescription, edited: .pace)
+
+        XCTAssertEqual(reconciled.derivedField, .duration)
+        XCTAssertEqual(
+            reconciled.duration?.representativeValue?
+                .converted(to: .minutes)?.value,
+            50
+        )
+    }
+
+    func testEditingDerivedRunningFieldMakesItAnInput() {
+        var result = RunningResult(
+            distance: .init(10, unit: .kilometers),
+            duration: .init(3_000, unit: .seconds),
+            pace: .init(300, unit: .secondsPerKilometer),
+            derivedField: .duration
+        )
+        result.duration = .init(3_300, unit: .seconds)
+
+        let reconciled = ActivityMath.reconcile(result, edited: .duration)
+
+        XCTAssertEqual(reconciled.derivedField, .pace)
+        XCTAssertEqual(
+            reconciled.pace?.converted(to: .secondsPerKilometer)?.value,
+            330
+        )
+    }
+
+    func testCyclingResultDerivesSpeed() {
+        var result = CyclingResult(
+            distance: .init(40, unit: .kilometers)
+        )
+        result.duration = .init(2, unit: .hours)
+
+        let reconciled = ActivityMath.reconcile(result, edited: .duration)
+
+        XCTAssertEqual(reconciled.derivedField, .speed)
+        XCTAssertEqual(
+            reconciled.speed?.converted(to: .kilometersPerHour)?.value,
+            20
+        )
+    }
+
     func testQuantityConversionPreservesDimension() {
         let fiveKilometers = TypedQuantity(5, unit: .kilometers)
 

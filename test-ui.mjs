@@ -75,6 +75,11 @@ assert(
   "種目枠の重複禁止グループは未指定が既定",
   original.program.slots[0].distinctGroup === null,
 );
+assert(
+  "型付き処方は未指定が既定",
+  original.program.phases[0].days[0].groups[0].setGroups[0].targets[0]
+    .activityPrescription === null,
+);
 valid("5/3/1風テンプレートが構造を持つ", model.template("531"));
 
 {

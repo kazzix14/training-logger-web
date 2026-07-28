@@ -218,10 +218,13 @@ public struct RecordPlanTpl: Codable, Equatable, Sendable {
     public var methodologyId: String?
     /// 指示メモ(ADR-0072 追補4)。処方バナーに表示する自由文
     public var noteText: String?
+    /// 種目タイプ固有の処方。nilならschemeが正規表現。
+    public var activityPrescription: ActivityPrescriptionPayload?
 
     public init(slotId: String, side: String?, scheme: [SchemeTpl], bind: String?,
                 bindFieldKey: String? = nil, methodologyId: String?,
-                noteText: String? = nil) {
+                noteText: String? = nil,
+                activityPrescription: ActivityPrescriptionPayload? = nil) {
         self.slotId = slotId
         self.side = side
         self.scheme = scheme
@@ -229,6 +232,7 @@ public struct RecordPlanTpl: Codable, Equatable, Sendable {
         self.bindFieldKey = bindFieldKey
         self.methodologyId = methodologyId
         self.noteText = noteText
+        self.activityPrescription = activityPrescription
     }
 }
 
