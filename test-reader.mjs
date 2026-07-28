@@ -120,6 +120,107 @@ function assert(name, condition, detail = "") {
 {
   const envelope = ui.template("minimal");
   const program = envelope.program;
+  program.slots[0].exerciseName = "ランニング";
+  const group = program.phases[0].days[0].groups[0];
+  const setGroup = group.setGroups[0];
+  const target = setGroup.targets[0];
+  target.activityPrescription = {
+    running: {
+      _0: {
+        distance: {
+          exact: { _0: { value: 1.2, unit: "kilometers" } },
+        },
+        duration: {
+          range: {
+            lower: { value: 5, unit: "minutes" },
+            upper: { value: 8, unit: "minutes" },
+          },
+        },
+        pace: {
+          relativeToBaseline: {
+            key: "running.thresholdSpeed",
+            speedMultiplier: {
+              exact: { _0: { value: 0.9, unit: "ratio" } },
+            },
+          },
+        },
+        derivedField: null,
+        targetRPE: null,
+        workoutLabel: "NT",
+      },
+    },
+  };
+
+  const running = reader.formatPrescription(
+    program,
+    group,
+    setGroup,
+    target,
+  );
+  assert(
+    "Runningの距離・時間範囲・相対ペースを型から表示する",
+    running.text.includes("1.2km") &&
+      running.text.includes("5–8分") &&
+      running.text.includes("90% running.thresholdSpeed"),
+    running.text,
+  );
+}
+
+{
+  const envelope = ui.template("minimal");
+  const program = envelope.program;
+  program.slots[0].exerciseName = "スクワット";
+  const group = program.phases[0].days[0].groups[0];
+  const setGroup = group.setGroups[0];
+  const target = setGroup.targets[0];
+  target.activityPrescription = {
+    strength: {
+      _0: {
+        sets: {
+          range: {
+            lower: { value: 1, unit: "count" },
+            upper: { value: 3, unit: "count" },
+          },
+        },
+        load: { open: {} },
+        relativeLoad: {
+          baselineKey: "strength.training1RM",
+          multiplier: {
+            range: {
+              lower: { value: 0.9, unit: "ratio" },
+              upper: { value: 1, unit: "ratio" },
+            },
+          },
+        },
+        repetitions: {
+          range: {
+            lower: { value: 1, unit: "count" },
+            upper: { value: 5, unit: "count" },
+          },
+        },
+        targetRPE: null,
+      },
+    },
+  };
+
+  const strength = reader.formatPrescription(
+    program,
+    group,
+    setGroup,
+    target,
+  );
+  assert(
+    "Strengthのセット・回数・相対重量範囲を型から表示する",
+    strength.text.includes("1–3セット") &&
+      strength.text.includes("1–5回") &&
+      strength.text.includes("90–100% strength.training1RM"),
+    strength.text,
+  );
+}
+
+{
+  const envelope = ui.template("minimal");
+  const program = envelope.program;
   program.slots[0].exerciseName = "ブルガリアンスクワット";
   const group = program.phases[0].days[0].groups[0];
   const setGroup = group.setGroups[0];

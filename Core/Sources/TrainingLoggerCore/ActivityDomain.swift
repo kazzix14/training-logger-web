@@ -358,17 +358,33 @@ public enum ActivityReference: Codable, Equatable, Sendable {
 
 // MARK: - Activity-specific prescriptions and results
 
+public struct StrengthRelativeLoadPrescription: Codable, Equatable, Sendable {
+    public var baselineKey: String
+    public var multiplier: QuantityTarget
+
+    public init(baselineKey: String, multiplier: QuantityTarget) {
+        self.baselineKey = baselineKey
+        self.multiplier = multiplier
+    }
+}
+
 public struct StrengthPrescription: Codable, Equatable, Sendable {
+    public var sets: QuantityTarget?
     public var load: QuantityTarget
+    public var relativeLoad: StrengthRelativeLoadPrescription?
     public var repetitions: QuantityTarget
     public var targetRPE: QuantityTarget?
 
     public init(
+        sets: QuantityTarget? = nil,
         load: QuantityTarget = .open,
+        relativeLoad: StrengthRelativeLoadPrescription? = nil,
         repetitions: QuantityTarget = .open,
         targetRPE: QuantityTarget? = nil
     ) {
+        self.sets = sets
         self.load = load
+        self.relativeLoad = relativeLoad
         self.repetitions = repetitions
         self.targetRPE = targetRPE
     }

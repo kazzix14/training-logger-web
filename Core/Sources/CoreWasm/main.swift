@@ -50,15 +50,25 @@ public func tl_validate(
     let payload = (try? JSONEncoder().encode(ValidationResult(issues: issues)))
         ?? Data(#"{"issues":["検証結果をJSONに変換できません"]}"#.utf8)
 
-    let result = UnsafeMutablePointer<CChar>.allocate(capacity: payload.count + 1)
-    payload.copyBytes(
-        to: UnsafeMutableRawBufferPointer(
-            start: result,
-            count: payload.count
-        )
-    )
-    result[payload.count] = 0
-    return UnsafePointer(result)
+    return cString(from: payload)
+}
+
+/// Returns a shared program fixture as a NUL-terminated `ProgramTransferEnvelope`
+/// JSON value. Unknown keys return a null pointer.
+@_cdecl("tl_program_fixture")
+public func tl_program_fixture(
+    _ keyPtr: UnsafePointer<UInt8>?,
+    _ keyLen: Int32
+) -> UnsafePointer<CChar>? {
+    let key = String(decoding: data(from: keyPtr, length: keyLen), as: UTF8.self)
+    guard let program = ProgramFixtureCatalog.fixture(key: key) else { return nil }
+
+    guard let payload = try? JSONEncoder().encode(
+        ProgramTransferEnvelope(program: program)
+    ) else {
+        return nil
+    }
+    return cString(from: payload)
 }
 
 private struct ValidationResult: Encodable {
@@ -71,4 +81,16 @@ private func data(
 ) -> Data {
     guard let pointer, length > 0 else { return Data() }
     return Data(bytes: pointer, count: Int(length))
+}
+
+private func cString(from payload: Data) -> UnsafePointer<CChar> {
+    let result = UnsafeMutablePointer<CChar>.allocate(capacity: payload.count + 1)
+    payload.copyBytes(
+        to: UnsafeMutableRawBufferPointer(
+            start: result,
+            count: payload.count
+        )
+    )
+    result[payload.count] = 0
+    return UnsafePointer(result)
 }

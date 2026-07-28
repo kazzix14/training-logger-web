@@ -2,7 +2,7 @@
 // Preact + htm をローカル vendor から読み込み、ビルドなしで動作させる。
 import { Component, h, render } from "./vendor/preact.module.js";
 import htm from "./vendor/htm.module.js";
-import { validateWithWasm } from "./wasm-core.js";
+import { programFixtureWithWasm, validateWithWasm } from "./wasm-core.js";
 
 const html = htm.bind(h);
 const ui = globalThis.TrainingLoggerUIModel;
@@ -54,6 +54,86 @@ function exactQuantityValue(target) {
   return Number.isFinite(value) ? value : null;
 }
 
+function quantityBounds(target, multiplier = 1) {
+  const exact = Number(target?.exact?._0?.value);
+  if (Number.isFinite(exact)) {
+    return { lower: exact * multiplier, upper: exact * multiplier };
+  }
+  const lower = Number(target?.range?.lower?.value);
+  const upper = Number(target?.range?.upper?.value);
+  return {
+    lower: Number.isFinite(lower) ? lower * multiplier : null,
+    upper: Number.isFinite(upper) ? upper * multiplier : null,
+  };
+}
+
+function quantityRangeBySetting(target, bound, displayValue, unit, divisor = 1) {
+  if (displayValue == null) return null;
+  const value = Number(displayValue) / divisor;
+  const bounds = quantityBounds(target);
+  let lower = bounds.lower ?? value;
+  let upper = bounds.upper ?? value;
+  if (bound === "lower") {
+    lower = value;
+    upper = Math.max(upper, value);
+  } else {
+    upper = Math.max(value, lower);
+  }
+  return lower === upper
+    ? exactQuantity(lower, unit)
+    : {
+        range: {
+          lower: { value: lower, unit },
+          upper: { value: upper, unit },
+        },
+      };
+}
+
+function updateStrengthPrescription(activity, field, bound, displayValue) {
+  if (activityPrescriptionKind(activity) !== "strength") return activity;
+  const next = JSON.parse(JSON.stringify(activity));
+  const value = next.strength._0;
+  if (field === "sets") {
+    value.sets = quantityRangeBySetting(
+      value.sets,
+      bound,
+      displayValue,
+      "count",
+    );
+  } else {
+    value.relativeLoad ??= {
+      baselineKey: "strength.training1RM",
+      multiplier: { open: {} },
+    };
+    value.relativeLoad.multiplier =
+      quantityRangeBySetting(
+        value.relativeLoad.multiplier,
+        bound,
+        displayValue,
+        "ratio",
+        100,
+      ) ?? { open: {} };
+  }
+  return next;
+}
+
+function updateStrengthRelativeLoad(activity, enabled, baselineKey = null) {
+  if (activityPrescriptionKind(activity) !== "strength") return activity;
+  const next = JSON.parse(JSON.stringify(activity));
+  if (!enabled) {
+    next.strength._0.relativeLoad = null;
+    return next;
+  }
+  next.strength._0.relativeLoad ??= {
+    baselineKey: "strength.training1RM",
+    multiplier: { open: {} },
+  };
+  if (baselineKey != null) {
+    next.strength._0.relativeLoad.baselineKey = baselineKey;
+  }
+  return next;
+}
+
 function defaultActivityPrescription(kind) {
   if (kind === "running") {
     return {
@@ -86,7 +166,9 @@ function defaultActivityPrescription(kind) {
     return {
       strength: {
         _0: {
+          sets: null,
           load: { open: {} },
+          relativeLoad: null,
           repetitions: { open: {} },
           targetRPE: null,
         },
@@ -726,9 +808,27 @@ class ProgramBuilder extends Component {
     this.writeClipboard(url, "共有リンクをコピーしました");
   }
 
-  insertTemplate() {
-    const label = this.state.templateName === "531" ? "5/3/1風" : "最小線形";
+  async insertTemplate() {
+    const fixtureLabels = {
+      "viada-strength-5k": "Viada STRENGTH + 5K",
+      "viada-strength-5k-taper": "Viada STRENGTH + 5K · Taper/Deload",
+    };
+    const fixtureLabel = fixtureLabels[this.state.templateName];
+    const label =
+      fixtureLabel ??
+      (this.state.templateName === "531" ? "5/3/1風" : "最小線形");
     if (!confirm(`${label}テンプレートで現在の内容を置き換えます。取り消しで戻せます。`)) return;
+
+    if (fixtureLabel) {
+      const envelope = await programFixtureWithWasm(this.state.templateName);
+      if (!envelope) {
+        this.showStatus("共有Coreからプリセットを読み込めませんでした", "error");
+        return;
+      }
+      this.replaceEnvelope(envelope, `${label}テンプレートを挿入しました`);
+      return;
+    }
+
     this.replaceEnvelope(ui.template(this.state.templateName), `${label}テンプレートを挿入しました`);
   }
 
@@ -895,8 +995,10 @@ class ProgramBuilder extends Component {
                     onInput=${event =>
                       this.setState({ templateName: event.currentTarget.value })}
                   >
-                    <option value="minimal">最小線形</option>
-                    <option value="531">5/3/1風</option>
+                      <option value="minimal">最小線形</option>
+                      <option value="531">5/3/1風</option>
+                      <option value="viada-strength-5k">Viada STRENGTH + 5K</option>
+                      <option value="viada-strength-5k-taper">Viada 5K · Taper/Deload</option>
                   </select>
                   ${Button({ children: "挿入", onClick: () => this.insertTemplate() })}
                 </div>
@@ -1730,6 +1832,125 @@ class ProgramBuilder extends Component {
                           ),
                         ),
                     }),
+              ]
+            : null}
+          ${activityKind === "strength"
+            ? [
+                NumberField({
+                  label: "処方セット下限",
+                  value: quantityBounds(activityValue.sets).lower,
+                  nullable: true,
+                  step: "1",
+                  min: "1",
+                  focusKey: `${pathKey(path)}.activitySetLower`,
+                  onInput: value =>
+                    this.update(
+                      [...path, "activityPrescription"],
+                      updateStrengthPrescription(
+                        target.activityPrescription,
+                        "sets",
+                        "lower",
+                        value,
+                      ),
+                    ),
+                }),
+                NumberField({
+                  label: "処方セット上限",
+                  value: quantityBounds(activityValue.sets).upper,
+                  nullable: true,
+                  step: "1",
+                  min: "1",
+                  focusKey: `${pathKey(path)}.activitySetUpper`,
+                  onInput: value =>
+                    this.update(
+                      [...path, "activityPrescription"],
+                      updateStrengthPrescription(
+                        target.activityPrescription,
+                        "sets",
+                        "upper",
+                        value,
+                      ),
+                    ),
+                }),
+                SelectField({
+                  label: "相対重量",
+                  value: activityValue.relativeLoad ? "value" : "",
+                  focusKey: `${pathKey(path)}.activityRelativeLoad`,
+                  onInput: value =>
+                    this.update(
+                      [...path, "activityPrescription"],
+                      updateStrengthRelativeLoad(
+                        target.activityPrescription,
+                        value === "value",
+                      ),
+                    ),
+                  children: [
+                    html`<option value="">指定なし</option>`,
+                    html`<option value="value">基準比率</option>`,
+                  ],
+                }),
+                activityValue.relativeLoad
+                  ? TextField({
+                      label: "相対重量の基準キー",
+                      value: activityValue.relativeLoad.baselineKey || "",
+                      focusKey: `${pathKey(path)}.activityRelativeBaseline`,
+                      onInput: value =>
+                        this.update(
+                          [...path, "activityPrescription"],
+                          updateStrengthRelativeLoad(
+                            target.activityPrescription,
+                            true,
+                            value,
+                          ),
+                        ),
+                    })
+                  : null,
+                activityValue.relativeLoad
+                  ? NumberField({
+                      label: "相対重量 下限 %",
+                      value: quantityBounds(
+                        activityValue.relativeLoad.multiplier,
+                        100,
+                      ).lower,
+                      nullable: true,
+                      step: "0.5",
+                      min: "0",
+                      focusKey: `${pathKey(path)}.activityRelativeLower`,
+                      onInput: value =>
+                        this.update(
+                          [...path, "activityPrescription"],
+                          updateStrengthPrescription(
+                            target.activityPrescription,
+                            "relativeLoad",
+                            "lower",
+                            value,
+                          ),
+                        ),
+                    })
+                  : null,
+                activityValue.relativeLoad
+                  ? NumberField({
+                      label: "相対重量 上限 %",
+                      value: quantityBounds(
+                        activityValue.relativeLoad.multiplier,
+                        100,
+                      ).upper,
+                      nullable: true,
+                      step: "0.5",
+                      min: "0",
+                      focusKey: `${pathKey(path)}.activityRelativeUpper`,
+                      onInput: value =>
+                        this.update(
+                          [...path, "activityPrescription"],
+                          updateStrengthPrescription(
+                            target.activityPrescription,
+                            "relativeLoad",
+                            "upper",
+                            value,
+                          ),
+                        ),
+                    })
+                  : null,
               ]
             : null}
         </div>

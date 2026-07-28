@@ -47,8 +47,8 @@ if (!existsSync(wasmPath)) {
   const cases = [
     fixture("妥当な最小プログラム"),
     { name: "5/3/1風テンプレートは妥当", envelope: model.template("531") },
-    fixture("percent 7500", envelope => {
-      firstTarget(envelope).load.percentOfVar.percent = 7500;
+  fixture("percent 75", envelope => {
+    firstTarget(envelope).load.percentOfVar.percent = 75;
     }, "percent"),
     fixture("固定重量 6000kg", envelope => {
       firstTarget(envelope).load = { fixed: { _0: 6000 } };
@@ -59,8 +59,8 @@ if (!existsSync(wasmPath)) {
     fixture("targets と entries の1:1不一致", envelope => {
       firstTarget(envelope).entryId = "unknown-entry";
     }, "組"),
-    fixture("存在しない slotId", envelope => {
-      firstGroup(envelope).entries[0].slotIds = ["unknown-slot"];
+  fixture("存在しない slotId", envelope => {
+    firstGroup(envelope).entries[0].variants[0].slotId = "unknown-slot";
     }, "枠"),
     fixture("同じ stageKey の長さ不一致", envelope => {
       // ルール不要の形で再現: 同キーの count と reps で長さを変える

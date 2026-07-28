@@ -255,18 +255,42 @@ public enum CoreValidation {
             if dimensions.contains(where: { $0 != dimension }) {
                 findings.append("\(label)の\(field)は\(dimension.rawValue)単位が必要です")
             }
+            if case .range(let lower, let upper) = target,
+               lower.dimension == upper.dimension,
+               lower.baseValue > upper.baseValue {
+                findings.append("\(label)の\(field)は下限を上限以下にしてください")
+            }
         }
 
         switch prescription {
         case .strength(let value):
+            require(value.sets, .count, "セット数")
             require(value.load, .load, "重量")
+            require(value.relativeLoad?.multiplier, .ratio, "相対重量")
+            if let relativeLoad = value.relativeLoad,
+               relativeLoad.baselineKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty {
+                findings.append("\(label)の相対重量には基準キーが必要です")
+            }
             require(value.repetitions, .count, "回数")
             require(value.targetRPE, .effort, "RPE")
         case .running(let value):
             require(value.distance, .distance, "距離")
             require(value.duration, .duration, "時間")
-            if case .absolute(let pace) = value.pace {
+            switch value.pace {
+            case .absolute(let pace):
                 require(pace, .pace, "ペース")
+            case .relativeToBaseline(let key, let speedMultiplier):
+                require(speedMultiplier, .ratio, "相対ペース")
+                if key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    findings.append("\(label)の相対ペースには基準キーが必要です")
+                }
+            case .zone(let key):
+                if key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    findings.append("\(label)のペースゾーンにはキーが必要です")
+                }
+            case .open:
+                break
             }
             require(value.targetRPE, .effort, "RPE")
         case .cycling(let value):

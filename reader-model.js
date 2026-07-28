@@ -127,24 +127,104 @@ function resolveVariantTarget(target, targetOverride) {
     return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
   }
 
+  function quantityTargetText(target, suffix, multiplier = 1) {
+    const quantity = typedQuantity(target);
+    if (!quantity) return "";
+    if (quantity.range) {
+      const [lower, upper] = quantity.range;
+      const lowerValue = Number(lower?.value) * multiplier;
+      const upperValue = Number(upper?.value) * multiplier;
+      if (!Number.isFinite(lowerValue) || !Number.isFinite(upperValue)) return "";
+      return `${Number(lowerValue.toFixed(2))}–${Number(upperValue.toFixed(2))}${suffix}`;
+    }
+    const value = Number(quantity.value) * multiplier;
+    if (!Number.isFinite(value)) return "";
+    return `${Number(value.toFixed(2))}${suffix}`;
+  }
+
+  function convertedQuantityTargetText(target, dimension, suffix, digits = 1) {
+    const quantity = typedQuantity(target);
+    if (!quantity) return "";
+    const converted = source => convertQuantity(source, dimension);
+    if (quantity.range) {
+      const lower = converted(quantity.range[0]);
+      const upper = converted(quantity.range[1]);
+      if (lower == null || upper == null) return "";
+      return `${Number(lower.toFixed(digits))}–${Number(upper.toFixed(digits))}${suffix}`;
+    }
+    const value = converted(quantity);
+    if (value == null) return "";
+    return `${Number(value.toFixed(digits))}${suffix}`;
+  }
+
   function activityPrescriptionText(activity) {
     if (!activity || typeof activity !== "object") return "";
     const kind = Object.keys(activity)[0];
     const value = activity[kind]?._0;
     if (!value) return "";
     const parts = [];
+    if (kind === "strength") {
+      const sets = quantityTargetText(value.sets, "セット");
+      const repetitions = quantityTargetText(value.repetitions, "回");
+      const load = quantityTargetText(value.load, "kg");
+      const relativeLoad = quantityTargetText(
+        value.relativeLoad?.multiplier,
+        "%",
+        100,
+      );
+      if (sets) parts.push(sets);
+      if (repetitions) parts.push(repetitions);
+      if (load) parts.push(load);
+      if (relativeLoad) {
+        const baseline = value.relativeLoad?.baselineKey;
+        parts.push(`${relativeLoad}${baseline ? ` ${baseline}` : ""}`);
+      }
+      const rpe = quantityTargetText(value.targetRPE, "");
+      if (rpe) parts.push(`RPE ${rpe}`);
+      return parts.join(" · ");
+    }
     if (kind === "running" && value.workoutLabel) parts.push(value.workoutLabel);
-    const distance = convertQuantity(typedQuantity(value.distance), "distance");
-    const duration = convertQuantity(typedQuantity(value.duration), "duration");
-    if (distance != null) parts.push(`${Number(distance.toFixed(2))}km`);
-    if (duration != null) parts.push(`${Number(duration.toFixed(1))}分`);
+    const distance = convertedQuantityTargetText(
+      value.distance,
+      "distance",
+      "km",
+      2,
+    );
+    const duration = convertedQuantityTargetText(
+      value.duration,
+      "duration",
+      "分",
+    );
+    if (distance) parts.push(distance);
+    if (duration) parts.push(duration);
     if (kind === "running") {
-      const paceTarget = value.pace?.absolute?._0;
-      const pace = convertQuantity(typedQuantity(paceTarget), "pace");
-      if (pace != null) parts.push(`${clockText(pace)}/km`);
+      const absolutePace = typedQuantity(value.pace?.absolute?._0);
+      if (absolutePace && !absolutePace.range) {
+        const pace = convertQuantity(absolutePace, "pace");
+        if (pace != null) parts.push(`${clockText(pace)}/km`);
+      }
+      const relativePace = value.pace?.relativeToBaseline;
+      if (relativePace) {
+        const multiplier = quantityTargetText(
+          relativePace.speedMultiplier,
+          "%",
+          100,
+        );
+        if (multiplier) {
+          parts.push(
+            `${multiplier}${relativePace.key ? ` ${relativePace.key}` : ""}`,
+          );
+        }
+      }
+      const zone = value.pace?.zone?.key;
+      if (zone) parts.push(zone);
     } else if (kind === "cycling") {
-      const speed = convertQuantity(typedQuantity(value.speed), "speed");
-      if (speed != null) parts.push(`${Number(speed.toFixed(1))}km/h`);
+      const speed = convertedQuantityTargetText(
+        value.speed,
+        "speed",
+        "km/h",
+      );
+      if (speed) parts.push(speed);
     }
     const rpe = convertQuantity(typedQuantity(value.targetRPE), "effort");
     if (rpe != null) parts.push(`RPE ${rpe}`);
@@ -193,14 +273,18 @@ function formatPrescription(program, group, setGroup, target, skipVariants = fal
     const count = safeText(() => countText(setGroup?.count), "?セット");
     const typed = activityPrescriptionText(target?.activityPrescription);
     if (typed) {
-      const html = `${exercise} — ${count} × ${typed}`;
+      const kind = Object.keys(target?.activityPrescription || {})[0];
+      const body =
+        kind === "strength" ? `${typed}（生成: ${count}）` : `${count} × ${typed}`;
+      const note = typeof target?.note === "string" ? target.note.trim() : "";
+      const html = `${exercise} — ${body}${note ? ` ✎ ${note}` : ""}`;
       return {
         exercise,
         count,
         reps: typed,
         load: "",
         extras: "",
-        note: "",
+        note,
         measured: false,
         measureId: null,
         html,
