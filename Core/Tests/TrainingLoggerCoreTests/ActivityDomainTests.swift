@@ -2,6 +2,21 @@ import XCTest
 @testable import TrainingLoggerCore
 
 final class ActivityDomainTests: XCTestCase {
+    func testCustomMetricPreservesDefaultValue() throws {
+        let metric = CustomMetricDefinition(
+            id: "running.defaultPace",
+            label: "以前の推定ペース",
+            dimension: .pace,
+            unit: .secondsPerKilometer,
+            defaultValue: .init(300, unit: .secondsPerKilometer)
+        )
+
+        let data = try JSONEncoder().encode(metric)
+        let decoded = try JSONDecoder().decode(CustomMetricDefinition.self, from: data)
+
+        XCTAssertEqual(decoded, metric)
+    }
+
     func testQuantityConversionPreservesDimension() {
         let fiveKilometers = TypedQuantity(5, unit: .kilometers)
 

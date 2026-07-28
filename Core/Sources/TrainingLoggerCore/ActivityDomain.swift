@@ -164,12 +164,22 @@ public struct CustomMetricDefinition: Codable, Equatable, Identifiable, Sendable
     public var label: String
     public var dimension: QuantityDimension
     public var unit: QuantityUnit
+    /// 種目定義に属する既定値。記録ごとの実測値は result payload に保持する。
+    /// 型変更で専用フィールドを退避するときも、この値を失わない。
+    public var defaultValue: TypedQuantity?
 
-    public init(id: String, label: String, dimension: QuantityDimension, unit: QuantityUnit) {
+    public init(
+        id: String,
+        label: String,
+        dimension: QuantityDimension,
+        unit: QuantityUnit,
+        defaultValue: TypedQuantity? = nil
+    ) {
         self.id = id
         self.label = label
         self.dimension = dimension
         self.unit = unit
+        self.defaultValue = defaultValue
     }
 }
 
