@@ -1,16 +1,24 @@
 import Foundation
 
+public enum ProgramSchemaVersion {
+    public static let current = 2
+}
+
 /// プログラムJSONのエンベロープ（ADR-0072。アプリとWebで共有、ADR-0074）
 public struct ProgramTransferEnvelope: Codable {
     public var format: String
     public var version: Int
     public var program: BuilderDef
+    public var bundledActivities: [BundledActivityDefinition]?
 
-    public init(format: String = "traininglogger.program", version: Int = 1,
-                program: BuilderDef) {
+    public init(format: String = "traininglogger.program",
+                version: Int = ProgramSchemaVersion.current,
+                program: BuilderDef,
+                bundledActivities: [BundledActivityDefinition]? = nil) {
         self.format = format
         self.version = version
         self.program = program
+        self.bundledActivities = bundledActivities
     }
 }
 
@@ -33,13 +41,16 @@ public enum CoreValidation {
         guard envelope.format == "traininglogger.program" else {
             return ["format が \(envelope.format)（traininglogger.program を期待）"]
         }
-        guard envelope.version == 1 else {
-            return ["未対応のバージョンです（version \(envelope.version)。1 に対応）"]
+        guard envelope.version == ProgramSchemaVersion.current else {
+            return ["未対応のバージョンです（version \(envelope.version)。\(ProgramSchemaVersion.current) に対応）"]
         }
         var issues: [String] = []
+        let bundled = envelope.bundledActivities ?? []
+        let bundledNames = Set(bundled.map(\.name))
         issues.append(contentsOf: missingExerciseNames(
-            envelope.program, knownNames: Set(knownExerciseNames))
+            envelope.program, knownNames: Set(knownExerciseNames).union(bundledNames))
             .map { "存在しない種目があります: \($0)" })
+        issues.append(contentsOf: bundledActivityFindings(bundled))
         issues.append(contentsOf: ProgramBuilderCompiler.compile(envelope.program)
             .issues.map(\.description))
         issues.append(contentsOf: plausibilityFindings(envelope.program))
@@ -57,6 +68,38 @@ public enum CoreValidation {
 
     /// 数値の妥当性（ADR-0072 追補3）: 重量 0超〜500kg、percent 0超〜200、
     /// 増分 0超〜50kg、resetFactor (0,1]
+    public static func bundledActivityFindings(
+        _ definitions: [BundledActivityDefinition]
+    ) -> [String] {
+        var findings: [String] = []
+        var ids = Set<String>()
+        for definition in definitions {
+            if definition.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                findings.append("同梱種目のIDが空です: \(definition.name)")
+            } else if !ids.insert(definition.id).inserted {
+                findings.append("同梱種目のIDが重複しています: \(definition.id)")
+            }
+            if definition.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                findings.append("同梱種目の名前が空です: \(definition.id)")
+            }
+            switch definition.definition {
+            case .strength(let strength):
+                if !strength.bodyweightFraction.isFinite {
+                    findings.append("\(definition.name) の bodyweightFraction が有限値ではありません")
+                }
+            case .running(let running):
+                if let pace = running.defaultPace, pace.dimension != .pace {
+                    findings.append("\(definition.name) の defaultPace はペース単位が必要です")
+                }
+            case .cycling(let cycling):
+                if let speed = cycling.defaultSpeed, speed.dimension != .speed {
+                    findings.append("\(definition.name) の defaultSpeed は速度単位が必要です")
+                }
+            }
+        }
+        return findings
+    }
+
     public static func plausibilityFindings(_ def: BuilderDef) -> [String] {
         var findings: [String] = []
         func checkWeight(_ value: Double, _ label: String) {

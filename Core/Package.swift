@@ -24,4 +24,8 @@ let package = Package(
             name: "CoreWasm",
             dependencies: ["TrainingLoggerCore"]
         ),
+        .testTarget(
+            name: "TrainingLoggerCoreTests",
+            dependencies: ["TrainingLoggerCore"]
+        ),
     ])
