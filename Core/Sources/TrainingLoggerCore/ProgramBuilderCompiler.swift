@@ -35,15 +35,17 @@ public enum ProgramBuilderCompiler {
             ? expandRotations(def, period: period)
             : def
 
-        let inputs = def.variables.map { variable in
+        let inputs = expanded.variables.map { variable in
             ProgramInputDef(key: variable.id, label: variable.label, unit: variable.unit,
                             defaultFromE1RMFactor: variable.e1rmFactor,
                             fallbackValue: variable.fallbackValue,
                             slotId: variable.slotId)
         }
         // プリセットと同じく変数は恒等 init、ステージカウンタは 0 始まり
-        var initActions = def.variables.map { VarAssign(name: $0.id, expr: e($0.id)) }
-        initActions += collectStageKeys(def).sorted().map { VarAssign(name: $0, expr: e("0")) }
+        var initActions = expanded.variables.map { VarAssign(name: $0.id, expr: e($0.id)) }
+        initActions += collectStageKeys(expanded).sorted().map {
+            VarAssign(name: $0, expr: e("0"))
+        }
 
         let leaves = expanded.phases.enumerated().map { index, phase in
             compileLeaf(phase,
@@ -64,7 +66,11 @@ public enum ProgramBuilderCompiler {
         let deduped = issues.reduce(into: [BuilderIssue]()) { result, issue in
             if !result.contains(issue) { result.append(issue) }
         }
-        return Output(hsm: ProgramHSMDef(inputs: inputs, initActions: initActions, root: root),
+        return Output(hsm: ProgramHSMDef(
+            inputs: inputs,
+            initActions: initActions,
+            root: root,
+            previewBindings: compilePreviewBindings(expanded)),
                       issues: deduped)
     }
 
@@ -85,6 +91,8 @@ public enum ProgramBuilderCompiler {
         let indexById = Dictionary(uniqueKeysWithValues:
             def.phases.enumerated().map { ($0.element.id, $0.offset) })
         var out = def
+        var variableClones: [String: BuilderVariable] = [:]
+        var namespacedVariableIds = Set<String>()
         out.phases = (0..<period).flatMap { k -> [BuilderPhase] in
             def.phases.enumerated().map { phaseIndex, phase in
                 var copy = phase
@@ -95,24 +103,428 @@ public enum ProgramBuilderCompiler {
                     copy.nextPhaseId = "\(next)@\(targetCopy)"
                 }
                 copy.days = phase.days.map { day in
-                    var day = day
-                    day.groups = day.groups.map { group in
-                        var group = group
-                        group.entries = group.entries.map { entry in
-                            var entry = entry
-                            if entry.slotIds.count > 1 {
-                                entry.slotIds = [entry.slotIds[k % entry.slotIds.count]]
-                            }
-                            return entry
-                        }
-                        return group
+                var day = day
+                day.groups = day.groups.map { group in
+                    var group = group
+                    let selectedVariants = group.entries.reduce(
+                        into: [String: BuilderEntryVariant]()
+                    ) { result, entry in
+                        guard !entry.variants.isEmpty else { return }
+                        result[entry.id] = entry.variants[k % entry.variants.count]
                     }
+                    group.entries = group.entries.map { entry in
+                        var entry = entry
+                        if let variant = selectedVariants[entry.id] {
+                            entry.methodologyId = entry.methodologyId(for: variant)
+                            entry.variants = [variant]
+                        }
+                        return entry
+                    }
+                    group.setGroups = group.setGroups.map { setGroup in
+                        var setGroup = setGroup
+                        setGroup.targets = setGroup.targets.map { target in
+                            guard let variant = selectedVariants[target.entryId],
+                                  let override = variant.targetOverride(
+                                    setGroupId: setGroup.id
+                                  ) else { return target }
+                            return override.resolve(target)
+                        }
+                        return setGroup
+                    }
+                    return group
+                }
                     return day
                 }
+                namespaceVariantProgression(
+                    original: phase,
+                    expanded: &copy,
+                    rotationIndex: k,
+                    variables: def.variables,
+                    variableClones: &variableClones,
+                    namespacedVariableIds: &namespacedVariableIds)
                 return copy
             }
         }
+        out.variables.append(contentsOf: variableClones.values.sorted { $0.id < $1.id })
+        let referencedVariables = referencedVariableIds(in: out)
+        out.variables.removeAll {
+            namespacedVariableIds.contains($0.id)
+                && !referencedVariables.contains($0.id)
+        }
         return out
+    }
+
+    /// variantのbind・進行変数・stageを名前空間化する。ローテーション順は未実施でも進むが、
+    /// 選ばれていないvariantのactionsはそのleafに存在しないため状態は据え置かれる。
+    private static func namespaceVariantProgression(
+        original: BuilderPhase,
+        expanded: inout BuilderPhase,
+        rotationIndex: Int,
+        variables: [BuilderVariable],
+        variableClones: inout [String: BuilderVariable],
+        namespacedVariableIds: inout Set<String>
+    ) {
+        var replacedCommonRuleIds = Set<String>()
+        var variantRules: [BuilderRule] = []
+        var variantRuleIds = Set<String>()
+
+        for dayIndex in original.days.indices {
+            for groupIndex in original.days[dayIndex].groups.indices {
+                let originalGroup = original.days[dayIndex].groups[groupIndex]
+                for entry in originalGroup.entries where entry.variants.count > 1 {
+                    let variant = entry.variants[rotationIndex % entry.variants.count]
+                    let suffix = stateSuffix(entryId: entry.id, variantId: variant.id)
+
+                    var baseTargets: [(setGroupIndex: Int, targetIndex: Int,
+                                      base: BuilderTargetLine,
+                                      resolved: BuilderTargetLine)] = []
+                    for setGroupIndex in originalGroup.setGroups.indices {
+                        let setGroup = originalGroup.setGroups[setGroupIndex]
+                        for targetIndex in setGroup.targets.indices
+                        where setGroup.targets[targetIndex].entryId == entry.id {
+                            let base = setGroup.targets[targetIndex]
+                            let resolved = variant.targetOverride(setGroupId: setGroup.id)?
+                                .resolve(base) ?? base
+                            baseTargets.append((setGroupIndex, targetIndex, base, resolved))
+                        }
+                    }
+
+                    let baseMeasureIds = Set(baseTargets.compactMap(\.base.measureId))
+                    let commonRules = original.endRules.filter {
+                        if let measureId = ruleMeasureId($0) {
+                            return baseMeasureIds.contains(measureId)
+                        }
+                        let baseVariableIds = Set(baseTargets.compactMap {
+                            loadVariableId($0.base.load)
+                        })
+                        return !ruleVariableIds($0).isDisjoint(with: baseVariableIds)
+                    }
+                    replacedCommonRuleIds.formUnion(commonRules.map(\.id))
+                    let availableBaseMeasureIds = Set(baseTargets.compactMap {
+                        $0.resolved.measureId == nil ? nil : $0.base.measureId
+                    })
+
+                    let selectedRules: [BuilderRule]
+                    switch variant.progressionRules {
+                    case .inherit:
+                        selectedRules = commonRules.filter {
+                            ruleMeasureId($0).map(availableBaseMeasureIds.contains) ?? false
+                        }
+                    case .value(let rules):
+                        selectedRules = rules
+                    case .none:
+                        selectedRules = []
+                    }
+
+                    var measureMap: [String: String] = [:]
+                    for target in baseTargets {
+                        guard let resolvedMeasure = target.resolved.measureId else { continue }
+                        let namespaced = stateKey(resolvedMeasure, suffix: suffix)
+                        if let baseMeasure = target.base.measureId {
+                            measureMap[baseMeasure] = namespaced
+                        }
+                        measureMap[resolvedMeasure] = namespaced
+                    }
+                    for rule in selectedRules {
+                        if let measureId = ruleMeasureId(rule), measureMap[measureId] == nil {
+                            measureMap[measureId] = stateKey(measureId, suffix: suffix)
+                        }
+                    }
+
+                    var variableMap: [String: String] = [:]
+                    var variableSources: [String: String] = [:]
+                    for target in baseTargets {
+                        guard let resolvedVariable = loadVariableId(target.resolved.load)
+                        else { continue }
+                        let namespaced = stateKey(resolvedVariable, suffix: suffix)
+                        if let baseVariable = loadVariableId(target.base.load) {
+                            variableMap[baseVariable] = namespaced
+                        }
+                        variableMap[resolvedVariable] = namespaced
+                        variableSources[namespaced] = resolvedVariable
+                    }
+                    var stageMap: [String: String] = [:]
+                    for target in baseTargets {
+                        guard let resolvedStage = repsStageKey(target.resolved.reps)
+                        else { continue }
+                        let namespaced = stateKey(resolvedStage, suffix: suffix)
+                        if let baseStage = repsStageKey(target.base.reps) {
+                            stageMap[baseStage] = namespaced
+                        }
+                        stageMap[resolvedStage] = namespaced
+                    }
+                    for rule in selectedRules {
+                        for variableId in ruleVariableIds(rule) {
+                            if variableMap[variableId] == nil {
+                                let namespaced = stateKey(variableId, suffix: suffix)
+                                variableMap[variableId] = namespaced
+                                variableSources[namespaced] = variableId
+                            }
+                        }
+                        for stageKey in ruleStageKeys(rule) {
+                            if stageMap[stageKey] == nil {
+                                stageMap[stageKey] = stateKey(stageKey, suffix: suffix)
+                            }
+                        }
+                    }
+
+                    for (namespacedId, sourceId) in variableSources {
+                        guard variableClones[namespacedId] == nil,
+                              var clone = variables.first(where: { $0.id == sourceId })
+                        else { continue }
+                        clone.id = namespacedId
+                        clone.label = "\(clone.label)（\(variant.label ?? variant.slotId)）"
+                        clone.slotId = variant.slotId
+                        variableClones[namespacedId] = clone
+                        namespacedVariableIds.insert(sourceId)
+                    }
+                    namespacedVariableIds.formUnion(
+                        variableMap.keys.filter { variableId in
+                            variables.contains { $0.id == variableId }
+                        })
+
+                    for targetLocation in baseTargets {
+                        var target = expanded.days[dayIndex]
+                            .groups[groupIndex]
+                            .setGroups[targetLocation.setGroupIndex]
+                            .targets[targetLocation.targetIndex]
+                        if let measureId = target.measureId {
+                            target.measureId = measureMap[measureId]
+                                ?? stateKey(measureId, suffix: suffix)
+                        }
+                        target.load = remap(target.load, variables: variableMap)
+                        target.reps = remap(target.reps, stages: stageMap)
+                        expanded.days[dayIndex]
+                            .groups[groupIndex]
+                            .setGroups[targetLocation.setGroupIndex]
+                            .targets[targetLocation.targetIndex] = target
+
+                        if !stageMap.isEmpty {
+                            let count = expanded.days[dayIndex]
+                                .groups[groupIndex]
+                                .setGroups[targetLocation.setGroupIndex]
+                                .count
+                            expanded.days[dayIndex]
+                                .groups[groupIndex]
+                                .setGroups[targetLocation.setGroupIndex]
+                                .count = remap(count, stages: stageMap)
+                        }
+                    }
+
+                    for rule in selectedRules {
+                        let namespacedRule = remap(
+                            rule,
+                            suffix: suffix,
+                            measures: measureMap,
+                            variables: variableMap,
+                            stages: stageMap)
+                        if variantRuleIds.insert(namespacedRule.id).inserted {
+                            variantRules.append(namespacedRule)
+                        }
+                    }
+                }
+            }
+        }
+
+        expanded.endRules.removeAll { replacedCommonRuleIds.contains($0.id) }
+        expanded.endRules.append(contentsOf: variantRules)
+    }
+
+    private static func stateSuffix(entryId: String, variantId: String) -> String {
+        "\(entryId)_\(variantId)".map {
+            $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_"
+        }.reduce(into: "") { $0.append($1) }
+    }
+
+    private static func stateKey(_ source: String, suffix: String) -> String {
+        "\(source)__\(suffix)"
+    }
+
+    private static func loadVariableId(_ load: BuilderLoad?) -> String? {
+        switch load {
+        case .percentOfVar(let varId, _, _), .variable(let varId):
+            return varId
+        case .fixed, .none:
+            return nil
+        }
+    }
+
+    private static func repsStageKey(_ reps: BuilderReps) -> String? {
+        switch reps {
+        case .byStage(let stageKey, _), .amrapByStage(let stageKey, _):
+            return stageKey
+        case .fixed, .amrap, .range:
+            return nil
+        }
+    }
+
+    private static func ruleMeasureId(_ rule: BuilderRule) -> String? {
+        switch rule {
+        case .progressIfReached(_, _, let measureId, _, _),
+             .progressByTable(_, _, let measureId, _),
+             .adjustByBand(_, _, let measureId, _, _, _),
+             .stageDemotion(_, _, let measureId, _, _, _, _):
+            return measureId
+        case .always:
+            return nil
+        }
+    }
+
+    private static func ruleVariableIds(_ rule: BuilderRule) -> Set<String> {
+        switch rule {
+        case .progressIfReached(_, let varId, _, _, _),
+             .progressByTable(_, let varId, _, _),
+             .adjustByBand(_, let varId, _, _, _, _),
+             .always(_, let varId, _):
+            return [varId]
+        case .stageDemotion(_, _, _, _, let weightVarId, _, _):
+            return [weightVarId]
+        }
+    }
+
+    private static func ruleStageKeys(_ rule: BuilderRule) -> Set<String> {
+        switch rule {
+        case .progressIfReached(_, _, _, .stageReps(let stageKey, _), _):
+            return [stageKey]
+        case .stageDemotion(_, let stageKey, _, _, _, _, _):
+            return [stageKey]
+        default:
+            return []
+        }
+    }
+
+    private static func remap(
+        _ rule: BuilderRule,
+        suffix: String,
+        measures: [String: String],
+        variables: [String: String],
+        stages: [String: String]
+    ) -> BuilderRule {
+        let id = stateKey(rule.id, suffix: suffix)
+        switch rule {
+        case .progressIfReached(_, let varId, let measureId, let target, let increment):
+            return .progressIfReached(
+                id: id,
+                varId: variables[varId] ?? varId,
+                measureId: measures[measureId] ?? measureId,
+                target: remap(target, stages: stages),
+                increment: increment)
+        case .progressByTable(_, let varId, let measureId, let steps):
+            return .progressByTable(
+                id: id,
+                varId: variables[varId] ?? varId,
+                measureId: measures[measureId] ?? measureId,
+                steps: steps)
+        case .adjustByBand(
+            _, let varId, let measureId, let lower, let upper, let delta
+        ):
+            return .adjustByBand(
+                id: id,
+                varId: variables[varId] ?? varId,
+                measureId: measures[measureId] ?? measureId,
+                lower: lower,
+                upper: upper,
+                delta: delta)
+        case .stageDemotion(
+            _, let stageKey, let measureId, let stageTargets,
+            let weightVarId, let resetFactor, let resetThreshold
+        ):
+            return .stageDemotion(
+                id: id,
+                stageKey: stages[stageKey] ?? stageKey,
+                measureId: measures[measureId] ?? measureId,
+                stageTargets: stageTargets,
+                weightVarId: variables[weightVarId] ?? weightVarId,
+                resetFactor: resetFactor,
+                resetThreshold: resetThreshold)
+        case .always(_, let varId, let increment):
+            return .always(
+                id: id,
+                varId: variables[varId] ?? varId,
+                increment: increment)
+        }
+    }
+
+    private static func remap(
+        _ target: BuilderTarget,
+        stages: [String: String]
+    ) -> BuilderTarget {
+        switch target {
+        case .fixed:
+            return target
+        case .stageReps(let stageKey, let values):
+            return .stageReps(
+                stageKey: stages[stageKey] ?? stageKey,
+                values: values)
+        }
+    }
+
+    private static func remap(
+        _ load: BuilderLoad?,
+        variables: [String: String]
+    ) -> BuilderLoad? {
+        guard let load else { return nil }
+        switch load {
+        case .fixed:
+            return load
+        case .percentOfVar(let varId, let percent, let annotate):
+            return .percentOfVar(
+                varId: variables[varId] ?? varId,
+                percent: percent,
+                annotate: annotate)
+        case .variable(let varId):
+            return .variable(varId: variables[varId] ?? varId)
+        }
+    }
+
+    private static func remap(
+        _ reps: BuilderReps,
+        stages: [String: String]
+    ) -> BuilderReps {
+        switch reps {
+        case .fixed, .amrap, .range:
+            return reps
+        case .byStage(let stageKey, let values):
+            return .byStage(stageKey: stages[stageKey] ?? stageKey, values: values)
+        case .amrapByStage(let stageKey, let values):
+            return .amrapByStage(stageKey: stages[stageKey] ?? stageKey, values: values)
+        }
+    }
+
+    private static func remap(
+        _ count: BuilderCount,
+        stages: [String: String]
+    ) -> BuilderCount {
+        switch count {
+        case .fixed:
+            return count
+        case .byStage(let stageKey, let values):
+            return .byStage(stageKey: stages[stageKey] ?? stageKey, values: values)
+        }
+    }
+
+    private static func referencedVariableIds(in def: BuilderDef) -> Set<String> {
+        var result = Set<String>()
+        for phase in def.phases {
+            for rule in phase.endRules {
+                result.formUnion(ruleVariableIds(rule))
+            }
+            for day in phase.days {
+                for group in day.groups {
+                    for setGroup in group.setGroups {
+                        for target in setGroup.targets {
+                            switch target.load {
+                            case .percentOfVar(let varId, _, _), .variable(let varId):
+                                result.insert(varId)
+                            default:
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return result
     }
 
     private static func forEachEntry(_ def: BuilderDef, _ body: (BuilderEntry) -> Void) {
@@ -340,6 +752,83 @@ public enum ProgramBuilderCompiler {
         }
     }
 
+    private static func compilePreviewBindings(
+        _ def: BuilderDef
+    ) -> [ProgramPreviewBindingDef] {
+        let variableLabels = Dictionary(
+            def.variables.map { ($0.id, $0.label) },
+            uniquingKeysWith: { first, _ in first })
+        var result: [ProgramPreviewBindingDef] = []
+
+        for phase in def.phases {
+            for rule in phase.endRules {
+                let binding: ProgramPreviewBindingDef?
+                switch rule {
+                case .progressIfReached(
+                    let id, let varId, let measureId, let target, _
+                ):
+                    let targetSource: String
+                    switch target {
+                    case .fixed(let value):
+                        targetSource = num(value)
+                    case .stageReps(let stageKey, let values):
+                        targetSource = stageTable(stageKey, values)
+                    }
+                    binding = ProgramPreviewBindingDef(
+                        phaseId: phase.id,
+                        ruleId: id,
+                        label: variableLabels[varId] ?? varId,
+                        measureId: measureId,
+                        successExpr: e(targetSource),
+                        failureExpr: e("max(\(targetSource) - 1, 0)"))
+
+                case .progressByTable(
+                    let id, let varId, let measureId, let steps
+                ):
+                    binding = ProgramPreviewBindingDef(
+                        phaseId: phase.id,
+                        ruleId: id,
+                        label: variableLabels[varId] ?? varId,
+                        measureId: measureId,
+                        successExpr: .lit(steps.map(\.atLeast).max() ?? 1),
+                        failureExpr: .lit(0))
+
+                case .adjustByBand(
+                    let id, let varId, let measureId,
+                    let lower, let upper, _
+                ):
+                    binding = ProgramPreviewBindingDef(
+                        phaseId: phase.id,
+                        ruleId: id,
+                        label: variableLabels[varId] ?? varId,
+                        measureId: measureId,
+                        successExpr: .lit(upper.nextUp),
+                        failureExpr: .lit(
+                            max(lower.nextDown, Double.leastNonzeroMagnitude)))
+
+                case .stageDemotion(
+                    let id, let stageKey, let measureId,
+                    let stageTargets, let weightVarId, _, let resetThreshold
+                ):
+                    let targetSource = stageTable(stageKey, stageTargets)
+                    binding = ProgramPreviewBindingDef(
+                        phaseId: phase.id,
+                        ruleId: id,
+                        label: variableLabels[weightVarId] ?? weightVarId,
+                        measureId: measureId,
+                        successExpr: e(targetSource),
+                        failureExpr: e(
+                            "max(min(\(targetSource), \(num(resetThreshold))) - 0.1, 0.1)"))
+
+                case .always:
+                    binding = nil
+                }
+                if let binding { result.append(binding) }
+            }
+        }
+        return result
+    }
+
     // MARK: - 検証
 
     private static func validate(_ def: BuilderDef, into issues: inout [BuilderIssue]) {
@@ -357,6 +846,7 @@ public enum ProgramBuilderCompiler {
         var stageLengths: [String: Set<Int>] = [:]
 
         for phase in def.phases {
+            var rulesToValidate = phase.endRules
             for day in phase.days {
                 if day.groups.allSatisfy({ $0.entries.isEmpty }) {
                     issues.append(.emptyDay(phase: phase.label, day: day.label))
@@ -374,6 +864,18 @@ public enum ProgramBuilderCompiler {
                         for slotId in entry.slotIds where !slotIds.contains(slotId) {
                             issues.append(.unknownSlot(entryId: entry.id, slotId: slotId))
                         }
+                        for variant in entry.variants {
+                            if variant.targetOverrides.contains(where: { targetOverride in
+                                !group.setGroups.contains {
+                                    $0.id == targetOverride.setGroupId
+                                }
+                            }) {
+                                issues.append(.targetMismatch(groupId: group.id))
+                            }
+                            if case .value(let rules) = variant.progressionRules {
+                                rulesToValidate.append(contentsOf: rules)
+                            }
+                        }
                     }
                     for setGroup in group.setGroups {
                         // target ↔ メンバーの対応(ADR-0033): 未知の参照・欠けを検出
@@ -387,6 +889,12 @@ public enum ProgramBuilderCompiler {
                             stageLengths[key, default: []].insert(values.count)
                         }
                         for target in setGroup.targets {
+                            if let varId = loadVariableId(target.load),
+                               !varIds.contains(varId) {
+                                issues.append(.unknownVariable(
+                                    ruleId: target.entryId,
+                                    varId: varId))
+                            }
                             if let entry = group.entries.first(
                                 where: { $0.id == target.entryId }
                             ) {
@@ -404,14 +912,53 @@ public enum ProgramBuilderCompiler {
                                             expected: expected,
                                             actual: actual
                                         ))
-                                    } else if expected != .strength,
-                                              target.activityPrescription == nil {
-                                        issues.append(.missingActivityPrescription(
-                                            entryId: entry.id,
-                                            expected: expected
-                                        ))
-                                    }
+                            } else if expected != .strength,
+                                      target.activityPrescription == nil {
+                                issues.append(.missingActivityPrescription(
+                                    entryId: entry.id,
+                                    expected: expected
+                                ))
+                            }
+                            for variant in entry.variants {
+                                let resolved = variant.targetOverride(
+                                    setGroupId: setGroup.id
+                                )?.resolve(target) ?? target
+                                if let varId = loadVariableId(resolved.load),
+                                   !varIds.contains(varId) {
+                                    issues.append(.unknownVariable(
+                                        ruleId: target.entryId,
+                                        varId: varId))
                                 }
+                                if let actual = resolved.activityPrescription?.kind,
+                                   actual != expected {
+                                    issues.append(.activityPrescriptionMismatch(
+                                        entryId: entry.id,
+                                        expected: expected,
+                                        actual: actual))
+                                }
+                                if expected != .strength,
+                                   resolved.activityPrescription == nil {
+                                    issues.append(.missingActivityPrescription(
+                                        entryId: entry.id,
+                                        expected: expected))
+                                }
+                                if let side = resolved.side,
+                                   side != "left", side != "right" {
+                                    issues.append(.invalidSide(
+                                        entryId: entry.id,
+                                        value: side))
+                                }
+                                if let measureId = resolved.measureId {
+                                    measureIds.insert(measureId)
+                                }
+                                if case .byStage(let key, let values) = resolved.reps {
+                                    stageLengths[key, default: []].insert(values.count)
+                                }
+                                if case .amrapByStage(let key, let values) = resolved.reps {
+                                    stageLengths[key, default: []].insert(values.count)
+                                }
+                            }
+                        }
                             }
                             if let side = target.side, side != "left", side != "right" {
                                 issues.append(.invalidSide(entryId: target.entryId, value: side))
@@ -432,7 +979,7 @@ public enum ProgramBuilderCompiler {
                     }
                 }
             }
-            for rule in phase.endRules {
+            for rule in rulesToValidate {
                 switch rule {
                 case .progressIfReached(let id, let varId, let measureId, let target, _):
                     if !varIds.contains(varId) { issues.append(.unknownVariable(ruleId: id, varId: varId)) }

@@ -157,7 +157,7 @@
       load: {
         none: null,
         fixed: { fixed: { _0: 20 } },
-        percentOfVar: { percentOfVar: { varId, percent: 75, annotate: true } },
+    percentOfVar: { percentOfVar: { varId, percent: 0.75, annotate: true } },
         variable: { variable: { varId } },
       },
       count: {
@@ -221,13 +221,25 @@
     };
   }
 
-  function createEntry(model, slotId) {
-    return {
-      id: uniqueId(model, "entry"),
-      slotIds: slotId ? [slotId] : [],
-      methodologyId: null,
-    };
-  }
+function createEntry(model, slotId) {
+  const id = uniqueId(model, "entry");
+  return {
+    id,
+    variants: slotId
+      ? [
+          {
+            id: `${id}_v1`,
+            slotId,
+            label: null,
+            methodologyId: { inherit: {} },
+            targetOverrides: [],
+            progressionRules: { inherit: {} },
+          },
+        ]
+      : [],
+    methodologyId: null,
+  };
+}
 
   function createSetGroup(model, entries, variables) {
     return {
@@ -473,10 +485,10 @@
     envelope.program.note = "3週間の漸増と1週間のデロード。最終セットは限界まで。";
     envelope.program.variables[0].label = "トレーニングマックス";
     const weeks = [
-      { label: "Week 1 — 5回", reps: [5, 5, 5], percents: [65, 75, 85], min: 5 },
-      { label: "Week 2 — 3回", reps: [3, 3, 3], percents: [70, 80, 90], min: 3 },
-      { label: "Week 3 — 5/3/1", reps: [5, 3, 1], percents: [75, 85, 95], min: 1 },
-      { label: "Week 4 — デロード", reps: [5, 5, 5], percents: [40, 50, 60], min: null },
+    { label: "Week 1 — 5回", reps: [5, 5, 5], percents: [0.65, 0.75, 0.85], min: 5 },
+    { label: "Week 2 — 3回", reps: [3, 3, 3], percents: [0.7, 0.8, 0.9], min: 3 },
+    { label: "Week 3 — 5/3/1", reps: [5, 3, 1], percents: [0.75, 0.85, 0.95], min: 1 },
+    { label: "Week 4 — デロード", reps: [5, 5, 5], percents: [0.4, 0.5, 0.6], min: null },
     ];
     envelope.program.phases = weeks.map((week, phaseIndex) => {
       const phaseId = `week_${phaseIndex + 1}`;
@@ -516,7 +528,22 @@
             groups: [
               {
                 id: `block_w${phaseIndex + 1}`,
-                entries: [{ id: entryId, slotIds: ["main"], methodologyId: null }],
+          entries: [
+            {
+              id: entryId,
+              variants: [
+                {
+                  id: `${entryId}_v1`,
+                  slotId: "main",
+                  label: null,
+                  methodologyId: { inherit: {} },
+                  targetOverrides: [],
+                  progressionRules: { inherit: {} },
+                },
+              ],
+              methodologyId: null,
+            },
+          ],
                 setGroups: targets,
               },
             ],

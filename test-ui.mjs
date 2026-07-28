@@ -127,6 +127,12 @@ valid("5/3/1風テンプレートが構造を持つ", model.template("531"));
   const withEntry = model.addEntry(original, groupPath);
   const group = model.getAtPath(withEntry, groupPath);
   assert("種目行追加は全セット群に target を追加する", group.setGroups[0].targets.length === 2);
+  assert(
+    "種目行はslot配列でなく完全な処方variantを持つ",
+    Array.isArray(group.entries[1].variants) &&
+      group.entries[1].variants.length === 1 &&
+      group.entries[1].slotIds == null,
+  );
   valid("種目行追加後も entries と targets は1:1", withEntry);
 
   const copied = model.duplicateEntry(withEntry, groupPath, 0);

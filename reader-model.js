@@ -36,8 +36,11 @@
     return String(value).replace(/<[^>]*>/g, "");
   }
 
-  function slotIdsForEntry(entry) {
-    if (Array.isArray(entry?.slotIds)) return entry.slotIds;
+function slotIdsForEntry(entry) {
+  if (Array.isArray(entry?.variants)) {
+    return entry.variants.map(variant => variant.slotId).filter(Boolean);
+  }
+  if (Array.isArray(entry?.slotIds)) return entry.slotIds;
     return entry?.slotId ? [entry.slotId] : [];
   }
 
@@ -45,14 +48,45 @@
     return slot?.exerciseName || slot?.label || slot?.id || "種目未設定";
   }
 
-  function entryDisplayName(program, entry) {
+function entryDisplayName(program, entry) {
     const slots = program?.slots || [];
     const names = slotIdsForEntry(entry).map(id => {
       const slot = slots.find(item => item.id === id);
       return slotDisplayName(slot) || id;
     });
     return names.length ? names.join(" ⇄ ") : entry?.id || "種目未設定";
-  }
+}
+
+function resolvedOptionalOverride(value, inherited) {
+  if (value?.value) return value.value._0;
+  if (value?.none) return null;
+  return inherited;
+}
+
+function resolveVariantTarget(target, targetOverride) {
+  if (!targetOverride) return target;
+  return {
+    ...target,
+    reps: targetOverride.reps?.value?._0 || target.reps,
+    load: resolvedOptionalOverride(targetOverride.load, target.load),
+    extras:
+      resolvedOptionalOverride(targetOverride.extras, target.extras || []) || [],
+    measureId: resolvedOptionalOverride(
+      targetOverride.measureId,
+      target.measureId,
+    ),
+    measureFieldKey: resolvedOptionalOverride(
+      targetOverride.measureFieldKey,
+      target.measureFieldKey,
+    ),
+    note: resolvedOptionalOverride(targetOverride.note, target.note),
+    side: resolvedOptionalOverride(targetOverride.side, target.side),
+    activityPrescription: resolvedOptionalOverride(
+      targetOverride.activityPrescription,
+      target.activityPrescription,
+    ),
+  };
+}
 
   function typedQuantity(target) {
     if (!target || typeof target !== "object") return null;
@@ -117,9 +151,45 @@
     return parts.join(" · ");
   }
 
-  function formatPrescription(program, group, setGroup, target) {
-    const entry = (group?.entries || []).find(item => item.id === target?.entryId);
-    const exercise = `${entryDisplayName(program, entry)}${sideText(target?.side)}`;
+function formatPrescription(program, group, setGroup, target, skipVariants = false) {
+  const entry = (group?.entries || []).find(item => item.id === target?.entryId);
+  if (!skipVariants && Array.isArray(entry?.variants) && entry.variants.length > 1) {
+    const variants = entry.variants.map(variant => {
+      const targetOverride = (variant.targetOverrides || []).find(
+        item => item.setGroupId === setGroup?.id,
+      );
+      const resolvedTarget = resolveVariantTarget(target, targetOverride);
+      const narrowedEntry = { ...entry, variants: [variant] };
+      const narrowedGroup = {
+        ...group,
+        entries: (group.entries || []).map(item =>
+          item.id === entry.id ? narrowedEntry : item,
+        ),
+      };
+      return formatPrescription(
+        program,
+        narrowedGroup,
+        setGroup,
+        resolvedTarget,
+        true,
+      );
+    });
+    const html = variants.map(item => item.html).join(" / ");
+    return {
+      exercise: variants.map(item => item.exercise).join(" ⇄ "),
+      count: variants[0]?.count || "",
+      reps: variants.map(item => item.reps).join(" ⇄ "),
+      load: variants.map(item => item.load).join(" ⇄ "),
+      extras: variants.map(item => item.extras).filter(Boolean).join(" / "),
+      note: variants.map(item => item.note).filter(Boolean).join(" / "),
+      measured: variants.some(item => item.measured),
+      measureId: null,
+      variants,
+      html,
+      text: stripHTML(html),
+    };
+  }
+  const exercise = `${entryDisplayName(program, entry)}${sideText(target?.side)}`;
     const count = safeText(() => countText(setGroup?.count), "?セット");
     const typed = activityPrescriptionText(target?.activityPrescription);
     if (typed) {

@@ -14,11 +14,47 @@ public struct ProgramHSMDef: Codable, Equatable, Sendable {
     public var inputs: [ProgramInputDef]
     public var initActions: [VarAssign]
     public var root: PhaseDef
+    public var previewBindings: [ProgramPreviewBindingDef]?
 
-    public init(inputs: [ProgramInputDef], initActions: [VarAssign], root: PhaseDef) {
+    public init(
+        inputs: [ProgramInputDef],
+        initActions: [VarAssign],
+        root: PhaseDef,
+        previewBindings: [ProgramPreviewBindingDef]? = nil
+    ) {
         self.inputs = inputs
         self.initActions = initActions
         self.root = root
+        self.previewBindings = previewBindings
+    }
+}
+
+/// 採用前scenario previewで使う構造化bind。成功/失敗の値は現在varsから
+/// Expr評価し、維持はbind欠測として扱う。
+public struct ProgramPreviewBindingDef: Codable, Equatable, Sendable, Identifiable {
+    public var phaseId: String
+    public var ruleId: String
+    public var label: String
+    public var measureId: String
+    public var successExpr: Expr
+    public var failureExpr: Expr
+
+    public var id: String { "\(phaseId):\(ruleId):\(measureId)" }
+
+    public init(
+        phaseId: String,
+        ruleId: String,
+        label: String,
+        measureId: String,
+        successExpr: Expr,
+        failureExpr: Expr
+    ) {
+        self.phaseId = phaseId
+        self.ruleId = ruleId
+        self.label = label
+        self.measureId = measureId
+        self.successExpr = successExpr
+        self.failureExpr = failureExpr
     }
 }
 

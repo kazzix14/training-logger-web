@@ -73,13 +73,37 @@ function assert(name, condition, detail = "") {
   });
   const group = program.phases[0].days[0].groups[0];
   const entry = group.entries[0];
-  entry.slotIds = ["main", "front_squat"];
+  entry.variants = [
+    {
+      id: "main_v",
+      slotId: "main",
+      label: null,
+      methodologyId: { inherit: {} },
+      targetOverrides: [],
+      progressionRules: { inherit: {} },
+    },
+    {
+      id: "front_v",
+      slotId: "front_squat",
+      label: null,
+      methodologyId: { inherit: {} },
+      targetOverrides: [
+        {
+          setGroupId: "main_sets",
+          reps: { value: { _0: { fixed: { _0: 10 } } } },
+          load: { none: {} },
+          measureId: { none: {} },
+        },
+      ],
+      progressionRules: { none: {} },
+    },
+  ];
   const setGroup = group.setGroups[0];
   setGroup.count = { fixed: { _0: 3 } };
   const target = setGroup.targets[0];
   target.reps = { fixed: { _0: 5 } };
   target.load = {
-    percentOfVar: { varId: "main_tm", percent: 75, annotate: true },
+    percentOfVar: { varId: "main_tm", percent: 0.75, annotate: true },
   };
   target.extras = [{ fieldKey: "rpe", kind: { exact: { _0: 8 } } }];
   target.measureId = "squat_top";
@@ -88,7 +112,7 @@ function assert(name, condition, detail = "") {
   assert(
     "処方行はローテーション・セット・回数・重量・RPE・実測を一文にする",
     prescription.text ===
-      "スクワット ⇄ フロントスクワット — 3セット × 5回 @ メイン種目 TMの75% 〔RPE8〕〔実測〕",
+      "スクワット — 3セット × 5回 @ メイン種目 TMの75% 〔RPE8〕〔実測〕 / フロントスクワット — 3セット × 10回 〔RPE8〕",
     prescription.text,
   );
 }

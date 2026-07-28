@@ -191,6 +191,43 @@ function pathKey(path) {
   return path.join(".");
 }
 
+function entryVariants(entry) {
+  if (Array.isArray(entry?.variants)) return entry.variants;
+  const slotIds = entry?.slotIds || (entry?.slotId ? [entry.slotId] : []);
+  return slotIds.map((slotId, index) => ({
+    id: `${entry.id}_v${index + 1}`,
+    slotId,
+    label: null,
+    methodologyId: { inherit: {} },
+    targetOverrides: [],
+    progressionRules: { inherit: {} },
+  }));
+}
+
+function overrideCase(value) {
+  if (value?.value) return "value";
+  if (value?.none) return "none";
+  return "inherit";
+}
+
+function optionalExplicit(value) {
+  return value == null ? { none: {} } : { value: { _0: structuredClone(value) } };
+}
+
+function explicitTargetOverride(setGroupId, target) {
+  return {
+    setGroupId,
+    reps: { value: { _0: structuredClone(target.reps) } },
+    load: optionalExplicit(target.load),
+    extras: optionalExplicit(target.extras || []),
+    measureId: optionalExplicit(target.measureId),
+    measureFieldKey: optionalExplicit(target.measureFieldKey),
+    note: optionalExplicit(target.note),
+    side: optionalExplicit(target.side),
+    activityPrescription: optionalExplicit(target.activityPrescription),
+  };
+}
+
 function asNumber(value, nullable = false) {
   if (value === "" && nullable) return null;
   const parsed = Number(value);
@@ -1298,13 +1335,14 @@ class ProgramBuilder extends Component {
             variable => html`<option value=${variable.id}>${variable.label || variable.id}</option>`,
           ),
         }),
-        NumberField({
-          label: "%",
-          value: payload.percent,
-          step: "0.5",
-          focusKey: `${pathKey(path)}.percentOfVar.percent`,
-          onInput: next => this.update([...path, "percentOfVar", "percent"], next),
-        }),
+                NumberField({
+                  label: "%",
+                  value: payload.percent * 100,
+                  step: "0.5",
+                  focusKey: `${pathKey(path)}.percentOfVar.percent`,
+                  onInput: next =>
+                    this.update([...path, "percentOfVar", "percent"], next / 100),
+                }),
         Toggle({
           label: "割合を表示",
           checked: payload.annotate,
@@ -1361,23 +1399,7 @@ class ProgramBuilder extends Component {
           return html`
             <div class="entry-row" data-model-path=${pathKey(path)}>
               <span class="drag-index">${entryIndex + 1}</span>
-              <label class="field grow">
-                <span>種目枠（ローテーション順、カンマ区切り）</span>
-                <input
-                  type="text"
-                  value=${(entry.slotIds || (entry.slotId ? [entry.slotId] : [])).join(", ")}
-                  list="slot-id-list"
-                  data-focus=${`${pathKey(path)}.slotIds`}
-                  onInput=${event =>
-                    this.update(
-                      [...path, "slotIds"],
-                      event.currentTarget.value
-                        .split(",")
-                        .map(value => value.trim())
-                        .filter(Boolean),
-                    )}
-                />
-              </label>
+              ${this.renderEntryVariants(program, entry, path)}
               ${TextField({
                 label: "methodologyId",
                 value: entry.methodologyId,
@@ -1425,6 +1447,123 @@ class ProgramBuilder extends Component {
     `;
   }
 
+  renderEntryVariants(program, entry, entryPath) {
+    const variants = entryVariants(entry);
+    const variantsPath = [...entryPath, "variants"];
+    return html`
+      <div class="field grow">
+        <span>処方ローテーション</span>
+        <div class="compact-list">
+          ${variants.map((variant, index) => {
+            const path = [...variantsPath, index];
+            const methodologyMode = overrideCase(variant.methodologyId);
+            const progressionMode = overrideCase(variant.progressionRules);
+            return html`
+              <div class="resource-row" data-model-path=${pathKey(path)}>
+                <span class="drag-index">${index + 1}</span>
+                ${SelectField({
+                  label: "種目枠",
+                  value: variant.slotId,
+                  focusKey: `${pathKey(path)}.slotId`,
+                  onInput: value => this.update([...path, "slotId"], value),
+                  children: (program.slots || []).map(
+                    slot =>
+                      html`<option value=${slot.id}>${slot.label || slot.id}</option>`,
+                  ),
+                })}
+                ${TextField({
+                  label: "表示名",
+                  value: variant.label,
+                  nullable: true,
+                  placeholder: "任意",
+                  focusKey: `${pathKey(path)}.label`,
+                  onInput: value => this.update([...path, "label"], value || null),
+                })}
+                ${SelectField({
+                  label: "体系",
+                  value: methodologyMode,
+                  focusKey: `${pathKey(path)}.methodologyId`,
+                  onInput: value =>
+                    this.update(
+                      [...path, "methodologyId"],
+                      value === "none"
+                        ? { none: {} }
+                        : value === "value"
+                          ? { value: { _0: "" } }
+                          : { inherit: {} },
+                    ),
+                  children: [
+                    html`<option value="inherit">共通を継承</option>`,
+                    html`<option value="value">個別指定</option>`,
+                    html`<option value="none">なし</option>`,
+                  ],
+                })}
+                ${methodologyMode === "value"
+                  ? TextField({
+                      label: "methodologyId",
+                      value: variant.methodologyId.value?._0 || "",
+                      focusKey: `${pathKey(path)}.methodologyId.value`,
+                      onInput: value =>
+                        this.update(
+                          [...path, "methodologyId"],
+                          { value: { _0: value } },
+                        ),
+                    })
+                  : null}
+                ${SelectField({
+                  label: "進行",
+                  value: progressionMode,
+                  focusKey: `${pathKey(path)}.progressionRules`,
+                  onInput: value =>
+                    this.update(
+                      [...path, "progressionRules"],
+                      value === "none" ? { none: {} } : { inherit: {} },
+                    ),
+                  children: [
+                    html`<option value="inherit">共通ルールを継承</option>`,
+                    html`<option value="none">自動進行なし</option>`,
+                    ...(progressionMode === "value"
+                      ? [html`<option value="value">個別ルール</option>`]
+                      : []),
+                  ],
+                })}
+                ${IconButton({
+                  icon: "×",
+                  label: "variantを削除",
+                  danger: true,
+                  disabled: variants.length <= 1,
+                  onClick: () =>
+                    this.update(
+                      variantsPath,
+                      variants.filter((_, variantIndex) => variantIndex !== index),
+                    ),
+                })}
+              </div>
+            `;
+          })}
+        </div>
+        ${Button({
+          children: "＋ 処方variant",
+          className: "small",
+          onClick: () => {
+            const nextIndex = variants.length + 1;
+            this.update(variantsPath, [
+              ...variants,
+              {
+                id: `${entry.id}_v${nextIndex}`,
+                slotId: program.slots?.[0]?.id || "",
+                label: null,
+                methodologyId: { inherit: {} },
+                targetOverrides: [],
+                progressionRules: { inherit: {} },
+              },
+            ]);
+          },
+        })}
+      </div>
+    `;
+  }
+
   toggleMeasure(targetPath, enabled, fallbackId) {
     let next = ui.setValue(
       this.state.envelope,
@@ -1467,7 +1606,7 @@ class ProgramBuilder extends Component {
   renderTarget(program, target, targetIndex, setGroup, setGroupPath, group, location) {
     const path = [...setGroupPath, "targets", targetIndex];
     const entry = (group.entries || []).find(item => item.id === target.entryId);
-    const slotIds = entry?.slotIds || (entry?.slotId ? [entry.slotId] : []);
+    const slotIds = entryVariants(entry).map(variant => variant.slotId);
     const slotNames = slotIds.map(
       id => (program.slots || []).find(slot => slot.id === id)?.label || id,
     );
@@ -1664,6 +1803,266 @@ class ProgramBuilder extends Component {
             ? html`<span class="extra-preview">${target.extras.map(extraText).join(" / ")}</span>`
             : null}
         </div>
+        ${this.renderVariantTargetOverrides(group, entry, target, setGroup, setGroupPath)}
+      </div>
+    `;
+  }
+
+  renderVariantTargetOverrides(group, entry, target, setGroup, setGroupPath) {
+    const variants = entryVariants(entry);
+    if (variants.length <= 1) return null;
+    const entryIndex = (group.entries || []).findIndex(item => item.id === entry.id);
+    const groupPath = setGroupPath.slice(0, -2);
+
+    return html`
+      <div class="variant-targets">
+        <span class="mini-label">variant別処方</span>
+        ${variants.map((variant, variantIndex) => {
+          const variantPath = [
+            ...groupPath,
+            "entries",
+            entryIndex,
+            "variants",
+            variantIndex,
+          ];
+          const overrides = variant.targetOverrides || [];
+          const overrideIndex = overrides.findIndex(
+            item => item.setGroupId === setGroup.id,
+          );
+          const targetOverride = overrideIndex >= 0 ? overrides[overrideIndex] : null;
+          const overridePath = [
+            ...variantPath,
+            "targetOverrides",
+            Math.max(overrideIndex, 0),
+          ];
+          const replaceOverride = value => {
+            const next = [...overrides];
+            if (overrideIndex >= 0) next[overrideIndex] = value;
+            else next.push(value);
+            this.update([...variantPath, "targetOverrides"], next);
+          };
+          const removeOverride = () =>
+            this.update(
+              [...variantPath, "targetOverrides"],
+              overrides.filter(item => item.setGroupId !== setGroup.id),
+            );
+
+          if (!targetOverride) {
+            return html`
+              <div class="target-meta-line">
+                <strong>${variant.label || variant.slotId}</strong>
+                ${Button({
+                  children: "個別処方にする",
+                  className: "small",
+                  onClick: () =>
+                    replaceOverride(explicitTargetOverride(setGroup.id, target)),
+                })}
+                <span class="muted">共通処方を継承</span>
+              </div>
+            `;
+          }
+
+          const loadMode = overrideCase(targetOverride.load);
+          const measureMode = overrideCase(targetOverride.measureId);
+          const activityMode = overrideCase(targetOverride.activityPrescription);
+          const activity =
+            activityMode === "value"
+              ? targetOverride.activityPrescription.value?._0
+              : null;
+          const activityKind = activityPrescriptionKind(activity);
+          const activityValue = activity?.[activityKind]?._0 || {};
+          const setActivity = value =>
+            this.update(
+              [...overridePath, "activityPrescription"],
+              optionalExplicit(value),
+            );
+
+          return html`
+            <div class="target-row" data-model-path=${pathKey(overridePath)}>
+              <div class="target-title">
+                <strong>${variant.label || variant.slotId}</strong>
+                ${Button({
+                  children: "共通処方へ戻す",
+                  className: "small",
+                  onClick: removeOverride,
+                })}
+              </div>
+              <div class="enum-line">
+                <div class="enum-group">
+                  <span class="mini-label">回数</span>
+                  ${this.renderEnumFields(
+                    "reps",
+                    targetOverride.reps.value?._0 || target.reps,
+                    [...overridePath, "reps", "value", "_0"],
+                    this.state.envelope.program,
+                  )}
+                </div>
+                <div class="enum-group">
+                  ${SelectField({
+                    label: "重量",
+                    value: loadMode,
+                    focusKey: `${pathKey(overridePath)}.load`,
+                    onInput: value =>
+                      this.update(
+                        [...overridePath, "load"],
+                        value === "none"
+                          ? { none: {} }
+                          : value === "inherit"
+                            ? { inherit: {} }
+                            : optionalExplicit(
+                                target.load || { fixed: { _0: 0 } },
+                              ),
+                      ),
+                    children: [
+                      html`<option value="inherit">共通を継承</option>`,
+                      html`<option value="value">個別指定</option>`,
+                      html`<option value="none">なし・手入力</option>`,
+                    ],
+                  })}
+                  ${loadMode === "value"
+                    ? this.renderEnumFields(
+                        "load",
+                        targetOverride.load.value._0,
+                        [...overridePath, "load", "value", "_0"],
+                        this.state.envelope.program,
+                      )
+                    : null}
+                </div>
+              </div>
+              <div class="target-meta-line">
+                ${SelectField({
+                  label: "実測・進行",
+                  value: measureMode,
+                  focusKey: `${pathKey(overridePath)}.measureId`,
+                  onInput: value =>
+                    this.update(
+                      [...overridePath, "measureId"],
+                      value === "none"
+                        ? { none: {} }
+                        : value === "inherit"
+                          ? { inherit: {} }
+                          : optionalExplicit(
+                              target.measureId || `measure_${variant.id}`,
+                            ),
+                    ),
+                  children: [
+                    html`<option value="inherit">共通を継承</option>`,
+                    html`<option value="value">個別指定</option>`,
+                    html`<option value="none">進行なし</option>`,
+                  ],
+                })}
+                ${measureMode === "value"
+                  ? TextField({
+                      label: "measureId",
+                      value: targetOverride.measureId.value?._0 || "",
+                      focusKey: `${pathKey(overridePath)}.measureId.value`,
+                      onInput: value =>
+                        this.update(
+                          [...overridePath, "measureId"],
+                          optionalExplicit(value),
+                        ),
+                    })
+                  : null}
+                ${TextField({
+                  label: "指示メモ",
+                  value:
+                    overrideCase(targetOverride.note) === "value"
+                      ? targetOverride.note.value?._0
+                      : null,
+                  nullable: true,
+                  placeholder: "空ならメモなし",
+                  focusKey: `${pathKey(overridePath)}.note`,
+                  onInput: value =>
+                    this.update(
+                      [...overridePath, "note"],
+                      value ? optionalExplicit(value) : { none: {} },
+                    ),
+                })}
+              </div>
+              <div class="target-meta-line">
+                ${SelectField({
+                  label: "型付き処方",
+                  value: activityMode === "value" ? activityKind : activityMode,
+                  focusKey: `${pathKey(overridePath)}.activityPrescription`,
+                  onInput: value =>
+                    this.update(
+                      [...overridePath, "activityPrescription"],
+                      value === "inherit"
+                        ? { inherit: {} }
+                        : value === "none"
+                          ? { none: {} }
+                          : optionalExplicit(defaultActivityPrescription(value)),
+                    ),
+                  children: [
+                    html`<option value="inherit">共通を継承</option>`,
+                    html`<option value="none">なし</option>`,
+                    html`<option value="running">ランニング</option>`,
+                    html`<option value="cycling">サイクリング</option>`,
+                    html`<option value="strength">Strength payload</option>`,
+                  ],
+                })}
+                ${activityKind === "running" || activityKind === "cycling"
+                  ? [
+                      NumberField({
+                        label: "距離 km",
+                        value: exactQuantityValue(activityValue.distance),
+                        nullable: true,
+                        step: "0.1",
+                        min: "0",
+                        focusKey: `${pathKey(overridePath)}.activityDistance`,
+                        onInput: value =>
+                          setActivity(
+                            updateEndurancePrescription(activity, "distance", value),
+                          ),
+                      }),
+                      NumberField({
+                        label: "時間 分",
+                        value: exactQuantityValue(activityValue.duration),
+                        nullable: true,
+                        step: "0.1",
+                        min: "0",
+                        focusKey: `${pathKey(overridePath)}.activityDuration`,
+                        onInput: value =>
+                          setActivity(
+                            updateEndurancePrescription(activity, "duration", value),
+                          ),
+                      }),
+                      activityKind === "running"
+                        ? NumberField({
+                            label: "ペース 分/km",
+                            value:
+                              exactQuantityValue(activityValue.pace?.absolute?._0) == null
+                                ? null
+                                : exactQuantityValue(
+                                    activityValue.pace.absolute._0,
+                                  ) / 60,
+                            nullable: true,
+                            step: "0.05",
+                            min: "0",
+                            focusKey: `${pathKey(overridePath)}.activityPace`,
+                            onInput: value =>
+                              setActivity(
+                                updateEndurancePrescription(activity, "pace", value),
+                              ),
+                          })
+                        : NumberField({
+                            label: "速度 km/h",
+                            value: exactQuantityValue(activityValue.speed),
+                            nullable: true,
+                            step: "0.1",
+                            min: "0",
+                            focusKey: `${pathKey(overridePath)}.activitySpeed`,
+                            onInput: value =>
+                              setActivity(
+                                updateEndurancePrescription(activity, "speed", value),
+                              ),
+                          }),
+                    ]
+                  : null}
+              </div>
+            </div>
+          `;
+        })}
       </div>
     `;
   }

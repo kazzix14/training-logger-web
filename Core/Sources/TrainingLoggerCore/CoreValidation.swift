@@ -66,8 +66,9 @@ public enum CoreValidation {
         }
     }
 
-    /// 数値の妥当性（ADR-0072 追補3）: 重量 0超〜500kg、percent 0超〜200、
-    /// 増分 0超〜50kg、resetFactor (0,1]
+    /// 数値の妥当性（ADR-0072 追補3/6）: 基準重量 0超〜500kg、
+    /// 固定load -500〜500kg、percent 0超〜1、増分 0超〜50kg、
+    /// resetFactor (0,1]
     public static func bundledActivityFindings(
         _ definitions: [BundledActivityDefinition]
     ) -> [String] {
@@ -108,9 +109,14 @@ public enum CoreValidation {
                 slotKinds[slot.id] = kind
             }
         }
-        func checkWeight(_ value: Double, _ label: String) {
+        func checkBaselineWeight(_ value: Double, _ label: String) {
             if !(value > 0 && value <= 500) {
                 findings.append("\(label): \(value)kg（0超〜500kgの範囲外）")
+            }
+        }
+        func checkEnteredLoad(_ value: Double, _ label: String) {
+            if !value.isFinite || !(-500...500).contains(value) {
+                findings.append("\(label): \(value)kg（-500〜500kgの範囲外）")
             }
         }
         func checkIncrement(_ value: Double, _ label: String) {
@@ -118,21 +124,42 @@ public enum CoreValidation {
                 findings.append("\(label): \(value)kg（0超〜50kgの範囲外）")
             }
         }
+        func checkRule(_ rule: BuilderRule, _ label: String) {
+            switch rule {
+            case .progressIfReached(_, _, _, _, let increment):
+                checkIncrement(increment, "\(label)の increment")
+            case .always(_, _, let increment):
+                checkIncrement(increment, "\(label)の increment")
+            case .progressByTable(_, _, _, let steps):
+                for step in steps {
+                    checkIncrement(step.increment, "\(label)の increment")
+                }
+            case .adjustByBand(_, _, _, _, _, let delta):
+                checkIncrement(delta, "\(label)の delta")
+            case .stageDemotion(_, _, _, _, _, let resetFactor, _):
+                if !(resetFactor > 0 && resetFactor <= 1) {
+                    findings.append(
+                        "\(label)の resetFactor: \(resetFactor)（0超〜1の範囲外）")
+                }
+            }
+        }
         for variable in def.variables {
-            checkWeight(variable.fallbackValue, "基準重量「\(variable.label)」の fallbackValue")
+            checkBaselineWeight(
+                variable.fallbackValue,
+                "基準重量「\(variable.label)」の fallbackValue")
         }
         for phase in def.phases {
             for day in phase.days {
                 for group in day.groups {
                     for setGroup in group.setGroups {
                         for target in setGroup.targets {
-                            switch target.load {
-                            case .fixed(let kg):
-                                checkWeight(kg, "\(day.label) の固定重量")
-                            case .percentOfVar(_, let percent, _):
-                                if !(percent > 0 && percent <= 200) {
-                                    findings.append(
-                                        "\(day.label) の percent: \(percent)（0超〜200の範囲外。75% は 75 と書く）")
+                        switch target.load {
+                        case .fixed(let kg):
+                            checkEnteredLoad(kg, "\(day.label) の固定重量")
+                        case .percentOfVar(_, let percent, _):
+                            if !(percent > 0 && percent <= 1) {
+                                findings.append(
+                                    "\(day.label) の percent: \(percent)（0超〜1の範囲外。75% は 0.75 と書く）")
                                 }
                             case .variable, .none:
                                 break
@@ -160,23 +187,46 @@ public enum CoreValidation {
                     }
                 }
             }
-            for rule in phase.endRules {
-                switch rule {
-                case .progressIfReached(_, _, _, _, let increment):
-                    checkIncrement(increment, "進行ルール(\(rule.id))の increment")
-                case .always(_, _, let increment):
-                    checkIncrement(increment, "進行ルール(\(rule.id))の increment")
-                case .progressByTable(_, _, _, let steps):
-                    for step in steps {
-                        checkIncrement(step.increment, "進行ルール(\(rule.id))の increment")
-                    }
-                case .adjustByBand(_, _, _, _, _, let delta):
-                    checkIncrement(delta, "進行ルール(\(rule.id))の delta")
-                case .stageDemotion(_, _, _, _, _, let resetFactor, _):
-                    if !(resetFactor > 0 && resetFactor <= 1) {
-                        findings.append("進行ルール(\(rule.id))の resetFactor: \(resetFactor)（0超〜1の範囲外）")
+            for day in phase.days {
+                for group in day.groups {
+                    for entry in group.entries {
+                        for variant in entry.variants {
+                            let variantLabel = variant.label ?? variant.slotId
+                            for override in variant.targetOverrides {
+                                if case .value(let load) = override.load {
+                                    switch load {
+                                    case .fixed(let kg):
+                                        checkEnteredLoad(
+                                            kg,
+                                            "\(day.label)・\(variantLabel) の固定重量")
+                                    case .percentOfVar(_, let percent, _):
+                                        if !(percent > 0 && percent <= 1) {
+                                            findings.append(
+                                                "\(day.label)・\(variantLabel) の percent: \(percent)（0超〜1の範囲外。75% は 0.75 と書く）")
+                                        }
+                                    case .variable:
+                                        break
+                                    }
+                                }
+                                if case .value(let prescription) = override.activityPrescription {
+                                    findings.append(contentsOf: prescriptionFindings(
+                                        prescription,
+                                        label: "\(day.label)・\(variantLabel) の型付き処方"))
+                                }
+                            }
+                            if case .value(let rules) = variant.progressionRules {
+                                for rule in rules {
+                                    checkRule(
+                                        rule,
+                                        "進行ルール(\(rule.id))・\(variantLabel)")
+                                }
+                            }
+                        }
                     }
                 }
+            }
+            for rule in phase.endRules {
+                checkRule(rule, "進行ルール(\(rule.id))")
             }
         }
         return findings

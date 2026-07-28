@@ -781,6 +781,21 @@ code {
   font-weight: 800;
 }
 
+.variant-targets {
+  display: grid;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-strong);
+}
+
+.variant-targets > .target-row {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #18181c;
+}
+
 .prescription,
 .rule-preview {
   color: var(--text);

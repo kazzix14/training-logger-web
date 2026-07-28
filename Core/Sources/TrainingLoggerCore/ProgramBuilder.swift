@@ -152,40 +152,189 @@ public struct BuilderGroup: Equatable, Identifiable {
     }
 }
 
-/// 種目メンバー。何で組むか(枠のローテーション列)だけを持つ(ADR-0033)
+/// 共通処方に対する必須値の上書き。必須値なので `none` は持たない。
+public enum BuilderValueOverride<Value>: Codable, Equatable
+where Value: Codable & Equatable {
+    case inherit
+    case value(Value)
+}
+
+/// 共通処方に対する任意値の上書き。`none` は明示的な値の除去であり、
+/// 未設定(`inherit`)とは区別される。
+public enum BuilderOptionalOverride<Value>: Codable, Equatable
+where Value: Codable & Equatable {
+    case inherit
+    case value(Value)
+    case none
+
+    public func resolve(_ inherited: Value?) -> Value? {
+        switch self {
+        case .inherit: inherited
+        case .value(let value): value
+        case .none: nil
+        }
+    }
+}
+
+/// 1つのセット群に対する、ローテーションvariant固有の完全な処方上書き。
+public struct BuilderVariantTargetOverride: Codable, Equatable, Identifiable {
+    public var setGroupId: String
+    public var reps: BuilderValueOverride<BuilderReps>
+    public var load: BuilderOptionalOverride<BuilderLoad>
+    public var extras: BuilderOptionalOverride<[BuilderExtra]>
+    public var measureId: BuilderOptionalOverride<String>
+    public var measureFieldKey: BuilderOptionalOverride<String>
+    public var note: BuilderOptionalOverride<String>
+    public var side: BuilderOptionalOverride<String>
+    public var activityPrescription: BuilderOptionalOverride<ActivityPrescriptionPayload>
+
+    public var id: String { setGroupId }
+
+    public init(
+        setGroupId: String,
+        reps: BuilderValueOverride<BuilderReps> = .inherit,
+        load: BuilderOptionalOverride<BuilderLoad> = .inherit,
+        extras: BuilderOptionalOverride<[BuilderExtra]> = .inherit,
+        measureId: BuilderOptionalOverride<String> = .inherit,
+        measureFieldKey: BuilderOptionalOverride<String> = .inherit,
+        note: BuilderOptionalOverride<String> = .inherit,
+        side: BuilderOptionalOverride<String> = .inherit,
+        activityPrescription: BuilderOptionalOverride<ActivityPrescriptionPayload> = .inherit
+    ) {
+        self.setGroupId = setGroupId
+        self.reps = reps
+        self.load = load
+        self.extras = extras
+        self.measureId = measureId
+        self.measureFieldKey = measureFieldKey
+        self.note = note
+        self.side = side
+        self.activityPrescription = activityPrescription
+    }
+
+    public func resolve(_ target: BuilderTargetLine) -> BuilderTargetLine {
+        var resolved = target
+        if case .value(let value) = reps { resolved.reps = value }
+        resolved.load = load.resolve(target.load)
+        resolved.extras = extras.resolve(target.extras) ?? []
+        resolved.measureId = measureId.resolve(target.measureId)
+        resolved.measureFieldKey = measureFieldKey.resolve(target.measureFieldKey)
+        resolved.note = note.resolve(target.note)
+        resolved.side = side.resolve(target.side)
+        resolved.activityPrescription = activityPrescription.resolve(target.activityPrescription)
+        return resolved
+    }
+}
+
+/// サイクルごとに切り替わる完全な処方variant。
+public struct BuilderEntryVariant: Codable, Equatable, Identifiable {
+    public var id: String
+    public var slotId: String
+    public var label: String?
+    public var methodologyId: BuilderOptionalOverride<String>
+    public var targetOverrides: [BuilderVariantTargetOverride]
+    public var progressionRules: BuilderOptionalOverride<[BuilderRule]>
+
+    public init(
+        id: String,
+        slotId: String,
+        label: String? = nil,
+        methodologyId: BuilderOptionalOverride<String> = .inherit,
+        targetOverrides: [BuilderVariantTargetOverride] = [],
+        progressionRules: BuilderOptionalOverride<[BuilderRule]> = .inherit
+    ) {
+        self.id = id
+        self.slotId = slotId
+        self.label = label
+        self.methodologyId = methodologyId
+        self.targetOverrides = targetOverrides
+        self.progressionRules = progressionRules
+    }
+
+    public func targetOverride(setGroupId: String) -> BuilderVariantTargetOverride? {
+        targetOverrides.first { $0.setGroupId == setGroupId }
+    }
+}
+
+/// 種目メンバー。ローテーションはslot ID列ではなく、処方全体のvariant列を持つ。
 public struct BuilderEntry: Equatable, Identifiable {
     public var id: String
-    /// 種目枠のローテーション列(ADR-0032)。1つ = 固定、2つ以上 = サイクル一周ごとに次へ
-    public var slotIds: [String]
+    public var variants: [BuilderEntryVariant]
     /// 処方バナーの体系チップ("percent1rm" / "rpe" / "vbt" …)。nil = 基本
     public var methodologyId: String?
 
-    /// 先頭の枠。ローテーション未使用時の従来参照(コンパイルは展開後に単数化される)
-    public var slotId: String { slotIds.first ?? "" }
+    /// 同一v2内の既存UI/API用。永続化とコンパイルの正はvariants。
+    public var slotIds: [String] {
+        get { variants.map(\.slotId) }
+        set {
+            variants = newValue.enumerated().map { index, slotId in
+                let existing = variants.indices.contains(index) ? variants[index] : nil
+                return BuilderEntryVariant(
+                    id: existing?.id ?? "\(id)_v\(index + 1)",
+                    slotId: slotId,
+                    label: existing?.label,
+                    methodologyId: existing?.methodologyId ?? .inherit,
+                    targetOverrides: existing?.targetOverrides ?? [],
+                    progressionRules: existing?.progressionRules ?? .inherit)
+            }
+        }
+    }
+
+    public var slotId: String { variants.first?.slotId ?? "" }
+
+    public init(
+        id: String,
+        variants: [BuilderEntryVariant],
+        methodologyId: String? = nil
+    ) {
+        self.id = id
+        self.variants = variants
+        self.methodologyId = methodologyId
+    }
 
     public init(id: String, slotIds: [String], methodologyId: String? = nil) {
-        self.id = id
-        self.slotIds = slotIds
-        self.methodologyId = methodologyId
+        self.init(
+            id: id,
+            variants: slotIds.enumerated().map { index, slotId in
+                BuilderEntryVariant(id: "\(id)_v\(index + 1)", slotId: slotId)
+            },
+            methodologyId: methodologyId)
     }
 
     public init(id: String, slotId: String, methodologyId: String? = nil) {
         self.init(id: id, slotIds: [slotId], methodologyId: methodologyId)
     }
+
+    public func methodologyId(for variant: BuilderEntryVariant) -> String? {
+        variant.methodologyId.resolve(methodologyId)
+    }
 }
 
 extension BuilderEntry: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, slotId, slotIds, methodologyId
+        case id, variants, slotId, slotIds, methodologyId
     }
 
     /// 旧形式(slotId 単数)の builderData をそのまま読める(ADR-0032)。エンコードは常に slotIds
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let id = try container.decode(String.self, forKey: .id)
+        if let variants = try container.decodeIfPresent(
+            [BuilderEntryVariant].self,
+            forKey: .variants
+        ) {
+            self.init(
+                id: id,
+                variants: variants,
+                methodologyId: try container.decodeIfPresent(
+                    String.self,
+                    forKey: .methodologyId))
+            return
+        }
         let ids = try container.decodeIfPresent([String].self, forKey: .slotIds)
             ?? [try container.decode(String.self, forKey: .slotId)]
         self.init(
-            id: try container.decode(String.self, forKey: .id),
+            id: id,
             slotIds: ids,
             methodologyId: try container.decodeIfPresent(String.self, forKey: .methodologyId))
     }
@@ -193,7 +342,7 @@ extension BuilderEntry: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
-        try container.encode(slotIds, forKey: .slotIds)
+        try container.encode(variants, forKey: .variants)
         try container.encodeIfPresent(methodologyId, forKey: .methodologyId)
     }
 }
@@ -368,7 +517,7 @@ public enum BuilderReps: Codable, Equatable {
 public enum BuilderLoad: Codable, Equatable {
     /// kg 直値
     case fixed(Double)
-    /// 基準重量の %。annotate = 処方バナーに %注釈を出す(0.5kg 丸め)
+    /// 基準重量に掛ける0〜1の比率。annotate = 処方バナーに %注釈を出す(0.5kg 丸め)
     case percentOfVar(varId: String, percent: Double, annotate: Bool)
     /// 基準重量そのまま(SS 型。0.5kg 丸め)
     case variable(varId: String)

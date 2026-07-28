@@ -15,7 +15,7 @@ assert("repsText range", logic.repsText({ range: { lo: 8, hi: 12 } }).includes("
 assert("countText byStage",
        logic.countText({ byStage: { stageKey: "t", values: [5, 6, 10] } }).includes("5→6→10"));
 assert("loadText percent",
-       logic.loadText({ percentOfVar: { varId: "v", percent: 75, annotate: true } }, [
+  logic.loadText({ percentOfVar: { varId: "v", percent: 0.75, annotate: true } }, [
          { id: "v", label: "TM" },
        ]).includes("75%"));
 assert("loadText 自由重量", logic.loadText(null, []) === "自由重量");

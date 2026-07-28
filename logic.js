@@ -103,7 +103,8 @@ function loadText(load, variables) {
   const varLabel = id => (variables.find(v => v.id === id) || { label: id }).label;
   switch (c) {
     case "fixed": return `${p._0}kg`;
-    case "percentOfVar": return `${varLabel(p.varId)}の<span class="pct">${p.percent}%</span>`;
+    case "percentOfVar":
+      return `${varLabel(p.varId)}の<span class="pct">${p.percent * 100}%</span>`;
     case "variable": return `${varLabel(p.varId)}そのまま`;
     default: return "?";
   }
