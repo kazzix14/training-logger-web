@@ -188,6 +188,7 @@
     return {
       id,
       label: "基準重量",
+      dimension: "load",
       unit: "kg",
       e1rmFactor: null,
       fallbackValue: 60,
@@ -249,13 +250,14 @@ function createEntry(model, slotId) {
     };
   }
 
-  function createGroup(model) {
+  function createGroup(model, sessionID = null) {
     const slotId = model.program?.slots?.[0]?.id || null;
     const entry = createEntry(model, slotId);
     return {
       id: uniqueId(model, "block"),
       entries: [entry],
       setGroups: [createSetGroup(model, [entry], model.program?.variables || [])],
+      sessionID,
     };
   }
 
@@ -266,7 +268,64 @@ function createEntry(model, slotId) {
       label: "新しい日",
       pill: "",
       groups: [group],
+      sessions: null,
     };
+  }
+
+  function createSession(model, index = 0) {
+    return {
+      id: uniqueId(model, "session"),
+      label: `セッション ${index + 1}`,
+      pill: "",
+      execution: null,
+    };
+  }
+
+  function enableSessions(model, dayPath) {
+    const next = clone(model);
+    const day = getAtPath(next, dayPath);
+    if (!day || (Array.isArray(day.sessions) && day.sessions.length)) {
+      return next;
+    }
+    const session = createSession(next, 0);
+    session.label = day.label || session.label;
+    session.pill = day.pill || "";
+    day.sessions = [session];
+    (day.groups || []).forEach(group => {
+      group.sessionID = session.id;
+    });
+    return next;
+  }
+
+  function addSession(model, dayPath) {
+    let next = enableSessions(model, dayPath);
+    const day = getAtPath(next, dayPath);
+    if (!day) return next;
+    const session = createSession(next, day.sessions.length);
+    day.sessions.push(session);
+    return next;
+  }
+
+  function removeSession(model, dayPath, index) {
+    const next = clone(model);
+    const day = getAtPath(next, dayPath);
+    if (!day || !Array.isArray(day.sessions) || !day.sessions[index]) {
+      return next;
+    }
+    const removedID = day.sessions[index].id;
+    if (day.sessions.length === 1) {
+      day.sessions = null;
+      (day.groups || []).forEach(group => {
+        group.sessionID = null;
+      });
+      return next;
+    }
+    day.sessions.splice(index, 1);
+    const fallback = day.sessions[Math.min(index, day.sessions.length - 1)].id;
+    (day.groups || []).forEach(group => {
+      if (group.sessionID === removedID) group.sessionID = fallback;
+    });
+    return next;
   }
 
   function createPhase(model) {
@@ -277,8 +336,28 @@ function createEntry(model, slotId) {
       windowDays: 7,
       days: [day],
       endRules: [],
+      progressionPolicies: null,
       nextPhaseId: null,
     };
+  }
+
+  function setRuleMissingMetricBehavior(
+    model,
+    phasePath,
+    ruleId,
+    missingMetricBehavior
+  ) {
+    const next = clone(model);
+    const phase = getAtPath(next, phasePath);
+    if (!phase || !ruleId) return next;
+    const policies = (phase.progressionPolicies || []).filter(
+      policy => policy.ruleId !== ruleId
+    );
+    if (missingMetricBehavior !== "maintain") {
+      policies.push({ ruleId, missingMetricBehavior });
+    }
+    phase.progressionPolicies = policies.length ? policies : null;
+    return next;
   }
 
   function addEntry(model, groupPath) {
@@ -568,16 +647,19 @@ function createEntry(model, slotId) {
   return {
     addEntry,
     addExtra,
+    addSession,
     addSetGroup,
     clone,
     collectMeasureIds,
     createDay,
     createGroup,
+    createSession,
     createPhase,
     createSlot,
     createVariable,
     duplicateEntry,
     duplicateStructure,
+    enableSessions,
     enumDefault,
     getAtPath,
     insertItem,
@@ -586,8 +668,10 @@ function createEntry(model, slotId) {
     renameReferences,
     removeEntry,
     removeItem,
+    removeSession,
     ruleDefault,
     setValue,
+    setRuleMissingMetricBehavior,
     switchEnum,
     switchRule,
     template,

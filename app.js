@@ -1161,13 +1161,32 @@ class ProgramBuilder extends Component {
                     focusKey: `${pathKey(path)}.fallbackValue`,
                     onInput: value => this.update([...path, "fallbackValue"], value),
                   })}
-                  ${TextField({
-                    label: "単位",
-                    value: variable.unit,
+                ${TextField({
+                  label: "単位",
+                  value: variable.unit,
                     className: "short-field",
                     focusKey: `${pathKey(path)}.unit`,
-                    onInput: value => this.update([...path, "unit"], value),
-                  })}
+                  onInput: value => this.update([...path, "unit"], value),
+                })}
+                ${SelectField({
+                  label: "次元",
+                  value: variable.dimension,
+                  focusKey: `${pathKey(path)}.dimension`,
+                  onInput: value => this.update([...path, "dimension"], value),
+                  children: [
+                    ["load", "重量"],
+                    ["distance", "距離"],
+                    ["duration", "時間"],
+                    ["pace", "ペース"],
+                    ["speed", "速度"],
+                    ["count", "回数"],
+                    ["ratio", "比率"],
+                    ["effort", "強度"],
+                    ["scalar", "無次元"],
+                  ].map(([value, label]) =>
+                    html`<option value=${value}>${label}</option>`
+                  ),
+                })}
                   ${NumberField({
                     label: "e1RM係数",
                     value: variable.e1rmFactor,
@@ -2323,7 +2342,116 @@ class ProgramBuilder extends Component {
     `;
   }
 
-  renderGroup(program, group, groupIndex, dayPath, location) {
+  renderExecutionEditor(session, path) {
+    const value = session.execution
+      ? JSON.stringify(session.execution, null, 2)
+      : "";
+    return html`
+      <label class="field span-2 execution-json-field">
+        <span>実行順（perform / rest / sequence / repeat JSON）</span>
+        <textarea
+          value=${value}
+          placeholder="空欄ならブロック順。JSONを設定すると実行順・休憩・反復を明示できます。"
+          data-focus=${`${pathKey(path)}.execution`}
+          onChange=${event => {
+            const text = event.currentTarget.value.trim();
+            if (!text) {
+              this.update([...path, "execution"], null);
+              return;
+            }
+            try {
+              this.update([...path, "execution"], JSON.parse(text));
+            } catch (error) {
+              this.showStatus(`実行順JSONを読めません: ${error.message}`, "error");
+            }
+          }}
+        ></textarea>
+      </label>
+    `;
+  }
+
+  renderSessions(day, dayPath) {
+    const sessions = Array.isArray(day.sessions) ? day.sessions : [];
+    if (!sessions.length) {
+      return html`
+        <div class="sessions-empty">
+          <span>現在は1日＝1セッションです。</span>
+          ${Button({
+            children: "＋ セッション分割を有効化",
+            className: "small",
+            onClick: () =>
+              this.mutate(envelope => ui.enableSessions(envelope, dayPath)),
+          })}
+        </div>
+      `;
+    }
+
+    return html`
+      <section class="sessions-panel" data-model-path=${pathKey([...dayPath, "sessions"])}>
+        <div class="subheading">
+          <div>
+            <strong>セッション</strong>
+            <small>同じ日の中で別々の記録として生成されます。</small>
+          </div>
+          ${Button({
+            children: "＋ セッション",
+            className: "small primary",
+            onClick: () =>
+              this.mutate(envelope => ui.addSession(envelope, dayPath)),
+          })}
+        </div>
+        <div class="compact-list">
+          ${sessions.map((session, sessionIndex) => {
+            const sessionPath = [...dayPath, "sessions", sessionIndex];
+            return html`
+              <div class="resource-row session-row" data-model-path=${pathKey(sessionPath)}>
+                <div class="form-grid session-fields">
+                  ${TextField({
+                    label: "ID",
+                    value: session.id,
+                    className: "id-field",
+                    focusKey: `${pathKey(sessionPath)}.id`,
+                    onInput: value =>
+                      this.rename(sessionPath, value, ["sessionID"]),
+                  })}
+                  ${TextField({
+                    label: "セッション名",
+                    value: session.label,
+                    focusKey: `${pathKey(sessionPath)}.label`,
+                    onInput: value => this.update([...sessionPath, "label"], value),
+                  })}
+                  ${TextField({
+                    label: "ピル",
+                    value: session.pill,
+                    className: "short-field",
+                    focusKey: `${pathKey(sessionPath)}.pill`,
+                    onInput: value => this.update([...sessionPath, "pill"], value),
+                  })}
+                  ${this.renderExecutionEditor(session, sessionPath)}
+                </div>
+                ${IconButton({
+                  icon: "×",
+                  label:
+                    sessions.length === 1
+                      ? "セッション分割を解除"
+                      : "セッションを削除",
+                  danger: true,
+                  onClick: () =>
+                    this.confirmDelete("セッション", () =>
+                      this.mutate(envelope =>
+                        ui.removeSession(envelope, dayPath, sessionIndex)
+                      )
+                    ),
+                })}
+              </div>
+            `;
+          })}
+        </div>
+      </section>
+    `;
+  }
+
+  renderGroup(program, group, groupIndex, dayPath, location, sessions = []) {
     const groupsPath = [...dayPath, "groups"];
     const path = [...groupsPath, groupIndex];
     return html`
@@ -2337,8 +2465,21 @@ class ProgramBuilder extends Component {
           ${this.structureActions(groupsPath, groupIndex, "ブロック", {
             clearMeasures: true,
           })}
-        </div>
-        ${this.renderEntries(program, group, path)}
+      </div>
+      ${sessions.length
+        ? SelectField({
+            label: "所属セッション",
+            value: group.sessionID || sessions[0].id,
+            className: "session-picker",
+            focusKey: `${pathKey(path)}.sessionID`,
+            onInput: value => this.update([...path, "sessionID"], value),
+            children: sessions.map(
+              session =>
+                html`<option value=${session.id}>${session.label || session.id}</option>`
+            ),
+          })
+        : null}
+      ${this.renderEntries(program, group, path)}
         ${(group.setGroups || []).map((setGroup, setGroupIndex) =>
           this.renderSetGroup(
             program,
@@ -2388,17 +2529,29 @@ class ProgramBuilder extends Component {
           </div>
           ${this.structureActions(daysPath, dayIndex, "日")}
         </div>
-        ${(day.groups || []).map((group, groupIndex) =>
-          this.renderGroup(program, group, groupIndex, path, [...location, dayIndex]),
-        )}
-        ${Button({
-          children: "＋ ブロックを追加",
-          className: "wide-button dashed",
-          onClick: () =>
-            this.mutate(envelope =>
-              ui.insertItem(envelope, [...path, "groups"], ui.createGroup(envelope)),
+      ${this.renderSessions(day, path)}
+      ${(day.groups || []).map((group, groupIndex) =>
+        this.renderGroup(
+          program,
+          group,
+          groupIndex,
+          path,
+          [...location, dayIndex],
+          day.sessions || []
+        ),
+      )}
+      ${Button({
+        children: "＋ ブロックを追加",
+        className: "wide-button dashed",
+        onClick: () =>
+          this.mutate(envelope =>
+            ui.insertItem(
+              envelope,
+              [...path, "groups"],
+              ui.createGroup(envelope, day.sessions?.[0]?.id || null)
             ),
-        })}
+          ),
+      })}
       </section>
     `;
   }
@@ -2591,6 +2744,11 @@ class ProgramBuilder extends Component {
         ${(phase.endRules || []).map((rule, ruleIndex) => {
           const path = [...rulesPath, ruleIndex];
           const ruleCase = enumCase(rule);
+          const ruleId = enumPayload(rule)?.id || "";
+          const missingMetricBehavior =
+            (phase.progressionPolicies || []).find(
+              policy => policy.ruleId === ruleId
+            )?.missingMetricBehavior || "maintain";
           const preview = safeCall(() => ruleText(rule, program.variables || []));
           return html`
             <div class="rule-card" data-model-path=${pathKey(path)}>
@@ -2611,6 +2769,30 @@ class ProgramBuilder extends Component {
               </div>
               <div class="rule-fields">
                 ${this.renderRuleFields(program, rule, ruleIndex, phasePath)}
+                ${ruleCase === "always"
+                  ? null
+                  : SelectField({
+                      label: "実測がないとき",
+                      value: missingMetricBehavior,
+                      focusKey: `${pathKey(phasePath)}.progressionPolicies.${ruleId}`,
+                      onInput: value =>
+                        this.mutate(envelope =>
+                          ui.setRuleMissingMetricBehavior(
+                            envelope,
+                            phasePath,
+                            ruleId,
+                            value
+                          )
+                        ),
+                      children: [
+                        ["maintain", "維持して進む"],
+                        ["failure", "失敗扱い"],
+                        ["pending", "確認待ち"],
+                      ].map(
+                        ([value, label]) =>
+                          html`<option value=${value}>${label}</option>`
+                      ),
+                    })}
               </div>
             </div>
           `;

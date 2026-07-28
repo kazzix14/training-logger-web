@@ -38,6 +38,10 @@ public struct ProgramPreviewBindingDef: Codable, Equatable, Sendable, Identifiab
     public var measureId: String
     public var successExpr: Expr
     public var failureExpr: Expr
+    /// 実測を含む環境で 1=success / 0=maintain / -1=failure を返す。
+    public var outcomeExpr: Expr
+    public var trackedVariableIds: [String]
+    public var missingMetricBehavior: MissingMetricBehavior
 
     public var id: String { "\(phaseId):\(ruleId):\(measureId)" }
 
@@ -47,7 +51,10 @@ public struct ProgramPreviewBindingDef: Codable, Equatable, Sendable, Identifiab
         label: String,
         measureId: String,
         successExpr: Expr,
-        failureExpr: Expr
+        failureExpr: Expr,
+        outcomeExpr: Expr,
+        trackedVariableIds: [String],
+        missingMetricBehavior: MissingMetricBehavior = .maintain
     ) {
         self.phaseId = phaseId
         self.ruleId = ruleId
@@ -55,6 +62,9 @@ public struct ProgramPreviewBindingDef: Codable, Equatable, Sendable, Identifiab
         self.measureId = measureId
         self.successExpr = successExpr
         self.failureExpr = failureExpr
+        self.outcomeExpr = outcomeExpr
+        self.trackedVariableIds = trackedVariableIds
+        self.missingMetricBehavior = missingMetricBehavior
     }
 }
 
@@ -62,6 +72,8 @@ public struct ProgramPreviewBindingDef: Codable, Equatable, Sendable, Identifiab
 public struct ProgramInputDef: Codable, Equatable, Sendable {
     public var key: String
     public var label: String
+    /// 値の次元。unit は表示専用であり、型はここからのみ決める。
+    public var dimension: QuantityDimension
     public var unit: String
     /// 直近 e1RM からの既定値算出係数（例 0.9 = e1RM の 90%）。対象 slot の種目の実績から引く
     public var defaultFromE1RMFactor: Double?
@@ -73,6 +85,7 @@ public struct ProgramInputDef: Codable, Equatable, Sendable {
     public init(
         key: String,
         label: String,
+        dimension: QuantityDimension = .load,
         unit: String,
         defaultFromE1RMFactor: Double? = nil,
         fallbackValue: Double,
@@ -80,6 +93,7 @@ public struct ProgramInputDef: Codable, Equatable, Sendable {
     ) {
         self.key = key
         self.label = label
+        self.dimension = dimension
         self.unit = unit
         self.defaultFromE1RMFactor = defaultFromE1RMFactor
         self.fallbackValue = fallbackValue
@@ -211,11 +225,60 @@ public struct DayTemplateDef: Codable, Equatable, Sendable {
     public var label: String          // セッション名（"Push A" / "Week 3 · ベンチ"）
     public var dayPill: String        // 進行中タブの右ピル（"ベンチ日"）
     public var blocks: [BlockPlanTpl]
+    /// 1日の中に複数セッションがある場合の明示構造。nilなら従来の単一セッション。
+    public var sessions: [SessionTemplateDef]?
+    /// 単一セッション形式で使う実行木。blocksとの併用も可能。
+    public var execution: ExecutionNode?
 
-    public init(label: String, dayPill: String, blocks: [BlockPlanTpl]) {
+    public init(
+        label: String,
+        dayPill: String,
+        blocks: [BlockPlanTpl],
+        sessions: [SessionTemplateDef]? = nil,
+        execution: ExecutionNode? = nil
+    ) {
         self.label = label
         self.dayPill = dayPill
         self.blocks = blocks
+        self.sessions = sessions
+        self.execution = execution
+    }
+
+    public var resolvedSessions: [SessionTemplateDef] {
+        if let sessions, !sessions.isEmpty {
+            return sessions
+        }
+        return [
+            SessionTemplateDef(
+                id: "session",
+                label: label,
+                dayPill: dayPill,
+                blocks: blocks,
+                execution: execution
+            )
+        ]
+    }
+}
+
+public struct SessionTemplateDef: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var label: String
+    public var dayPill: String
+    public var blocks: [BlockPlanTpl]
+    public var execution: ExecutionNode?
+
+    public init(
+        id: String,
+        label: String,
+        dayPill: String,
+        blocks: [BlockPlanTpl] = [],
+        execution: ExecutionNode? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.dayPill = dayPill
+        self.blocks = blocks
+        self.execution = execution
     }
 }
 

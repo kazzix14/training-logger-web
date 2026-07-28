@@ -51,8 +51,8 @@ public enum CoreValidation {
             envelope.program, knownNames: Set(knownExerciseNames).union(bundledNames))
             .map { "存在しない種目があります: \($0)" })
         issues.append(contentsOf: bundledActivityFindings(bundled))
-        issues.append(contentsOf: ProgramBuilderCompiler.compile(envelope.program)
-            .issues.map(\.description))
+        let compilation = ProgramBuilderCompiler.compile(envelope.program)
+        issues.append(contentsOf: compilation.issues.map(\.description))
         issues.append(contentsOf: plausibilityFindings(envelope.program))
         return issues
     }

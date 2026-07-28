@@ -243,4 +243,45 @@ function groupPathFor(targetPath) {
   return targetPath.slice(0, targetPath.indexOf("setGroups") + 2);
 }
 
+{
+  const dayPath = ["program", "phases", 0, "days", 0];
+  const enabled = model.enableSessions(original, dayPath);
+  const enabledDay = model.getAtPath(enabled, dayPath);
+  assert(
+    "複数セッションを有効化すると既存ブロックを先頭へ割り当てる",
+    enabledDay.sessions.length === 1 &&
+      enabledDay.groups.every(group => group.sessionID === enabledDay.sessions[0].id)
+  );
+
+  const added = model.addSession(enabled, dayPath);
+  const addedDay = model.getAtPath(added, dayPath);
+  assert(
+    "同じ日にセッションを追加できる",
+    addedDay.sessions.length === 2 &&
+      addedDay.sessions[0].id !== addedDay.sessions[1].id
+  );
+
+  const assigned = model.setValue(
+    added,
+    [...dayPath, "groups", 0, "sessionID"],
+    addedDay.sessions[1].id
+  );
+  const removed = model.removeSession(assigned, dayPath, 1);
+  const removedDay = model.getAtPath(removed, dayPath);
+  assert(
+    "セッション削除時に所属ブロックを残るセッションへ移す",
+    removedDay.sessions.length === 1 &&
+      removedDay.groups[0].sessionID === removedDay.sessions[0].id
+  );
+
+  const disabled = model.removeSession(removed, dayPath, 0);
+  const disabledDay = model.getAtPath(disabled, dayPath);
+  assert(
+    "最後のセッションを削除すると単一セッション形式へ戻る",
+    disabledDay.sessions === null &&
+      disabledDay.groups.every(group => group.sessionID === null)
+  );
+  valid("セッション編集後も妥当", disabled);
+}
+
 console.log(`\n${assertions - failures}/${assertions} assertions passed`);

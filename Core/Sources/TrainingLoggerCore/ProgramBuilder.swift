@@ -32,6 +32,8 @@ public struct BuilderDef: Codable, Equatable {
 public struct BuilderVariable: Codable, Equatable, Identifiable {
     public var id: String              // HSM 変数名を兼ねる内部キー(自動採番)
     public var label: String           // 「スクワット TM」
+    /// 式検証で使う型。表示用 unit から推測しない。
+    public var dimension: QuantityDimension
     public var unit: String = "kg"
     /// 直近 e1RM からの既定値係数。nil = 開始重量を直接入力(SS 型)
     public var e1rmFactor: Double?
@@ -42,6 +44,7 @@ public struct BuilderVariable: Codable, Equatable, Identifiable {
     public init(
         id: String,
         label: String,
+        dimension: QuantityDimension = .load,
         unit: String = "kg",
         e1rmFactor: Double? = nil,
         fallbackValue: Double = 40,
@@ -49,6 +52,7 @@ public struct BuilderVariable: Codable, Equatable, Identifiable {
     ) {
         self.id = id
         self.label = label
+        self.dimension = dimension
         self.unit = unit
         self.e1rmFactor = e1rmFactor
         self.fallbackValue = fallbackValue
@@ -97,6 +101,8 @@ public struct BuilderPhase: Codable, Equatable, Identifiable {
     public var days: [BuilderDay] = []
     /// フェーズを終えるときの進行ルール(→ 遷移 actions)
     public var endRules: [BuilderRule] = []
+    /// ルール別の欠測時処理。未指定は maintain。
+    public var progressionPolicies: [BuilderProgressionPolicy]?
     /// nil = フェーズ列の次(末尾は先頭へ)
     public var nextPhaseId: String?
 
@@ -106,6 +112,7 @@ public struct BuilderPhase: Codable, Equatable, Identifiable {
         windowDays: Int? = nil,
         days: [BuilderDay] = [],
         endRules: [BuilderRule] = [],
+        progressionPolicies: [BuilderProgressionPolicy]? = nil,
         nextPhaseId: String? = nil
     ) {
         self.id = id
@@ -113,7 +120,23 @@ public struct BuilderPhase: Codable, Equatable, Identifiable {
         self.windowDays = windowDays
         self.days = days
         self.endRules = endRules
+        self.progressionPolicies = progressionPolicies
         self.nextPhaseId = nextPhaseId
+    }
+}
+
+public struct BuilderProgressionPolicy: Codable, Equatable, Identifiable {
+    public var ruleId: String
+    public var missingMetricBehavior: MissingMetricBehavior
+
+    public var id: String { ruleId }
+
+    public init(
+        ruleId: String,
+        missingMetricBehavior: MissingMetricBehavior
+    ) {
+        self.ruleId = ruleId
+        self.missingMetricBehavior = missingMetricBehavior
     }
 }
 
@@ -122,12 +145,40 @@ public struct BuilderDay: Codable, Equatable, Identifiable {
     public var label: String
     public var pill: String = ""
     public var groups: [BuilderGroup] = []
+    /// nilなら従来どおり1日=1セッション。指定時はgroup.sessionIDで明示分割する。
+    public var sessions: [BuilderSession]?
 
-    public init(id: String, label: String, pill: String = "", groups: [BuilderGroup] = []) {
+    public init(
+        id: String,
+        label: String,
+        pill: String = "",
+        groups: [BuilderGroup] = [],
+        sessions: [BuilderSession]? = nil
+    ) {
         self.id = id
         self.label = label
         self.pill = pill
         self.groups = groups
+        self.sessions = sessions
+    }
+}
+
+public struct BuilderSession: Codable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var pill: String
+    public var execution: ExecutionNode?
+
+    public init(
+        id: String,
+        label: String,
+        pill: String = "",
+        execution: ExecutionNode? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.pill = pill
+        self.execution = execution
     }
 }
 
@@ -136,6 +187,8 @@ public struct BuilderDay: Codable, Equatable, Identifiable {
 /// entries が2つ以上ならスーパーセット(1周に全種目)
 public struct BuilderGroup: Equatable, Identifiable {
     public var id: String
+    /// BuilderDay.sessionsを使う場合の所属。nilは先頭セッションへ明示的に割り当てる。
+    public var sessionID: String?
     /// 種目メンバー(セットは持たない)。枠ローテーション・体系チップの担体
     public var entries: [BuilderEntry] = []
     /// 組全体の「周のまとまり」。各周のなかみは targets(種目ごとの目標)
@@ -144,11 +197,13 @@ public struct BuilderGroup: Equatable, Identifiable {
     public init(
         id: String,
         entries: [BuilderEntry] = [],
-        setGroups: [BuilderSetGroup] = []
+        setGroups: [BuilderSetGroup] = [],
+        sessionID: String? = nil
     ) {
         self.id = id
         self.entries = entries
         self.setGroups = setGroups
+        self.sessionID = sessionID
     }
 }
 
@@ -426,7 +481,7 @@ public extension BuilderSetGroup {
 
 extension BuilderGroup: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, entries, setGroups
+        case id, entries, setGroups, sessionID
     }
 
     /// 旧エントリの生の形(setGroups を抱えている)。移行専用
@@ -451,15 +506,29 @@ extension BuilderGroup: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let id = try container.decode(String.self, forKey: .id)
+        let sessionID = try container.decodeIfPresent(
+            String.self,
+            forKey: .sessionID
+        )
         let entries = try container.decodeIfPresent([BuilderEntry].self, forKey: .entries) ?? []
         if let setGroups = try container.decodeIfPresent([BuilderSetGroup].self, forKey: .setGroups) {
             // 新形式
-            self.init(id: id, entries: entries, setGroups: setGroups)
+            self.init(
+                id: id,
+                entries: entries,
+                setGroups: setGroups,
+                sessionID: sessionID
+            )
             return
         }
         // 旧形式: entries の中の setGroups を持ち上げる(無損失変換)
         let payloads = try container.decodeIfPresent([LegacyEntryPayload].self, forKey: .entries) ?? []
-        self.init(id: id, entries: entries, setGroups: Self.migrated(payloads))
+        self.init(
+            id: id,
+            entries: entries,
+            setGroups: Self.migrated(payloads),
+            sessionID: sessionID
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -467,6 +536,7 @@ extension BuilderGroup: Codable {
         try container.encode(id, forKey: .id)
         try container.encode(entries, forKey: .entries)
         try container.encode(setGroups, forKey: .setGroups)
+        try container.encodeIfPresent(sessionID, forKey: .sessionID)
     }
 
     private static func migrated(_ payloads: [LegacyEntryPayload]) -> [BuilderSetGroup] {
@@ -606,6 +676,7 @@ public enum BuilderIssue: Equatable, CustomStringConvertible {
         expected: ActivityKind,
         actual: ActivityKind
     )
+    case invalidExpression(path: String, message: String)
 
     public var description: String {
         switch self {
@@ -628,6 +699,8 @@ public enum BuilderIssue: Equatable, CustomStringConvertible {
             return "\(expected.rawValue)の型付き処方がありません: \(entryId)"
         case .activityPrescriptionMismatch(let entryId, let expected, let actual):
             return "種目タイプと処方タイプが一致しません: \(entryId)（\(expected.rawValue) / \(actual.rawValue)）"
+        case .invalidExpression(let path, let message):
+            return "式の型が不正です: \(path): \(message)"
         }
     }
 }

@@ -36,7 +36,8 @@ public enum ProgramBuilderCompiler {
             : def
 
         let inputs = expanded.variables.map { variable in
-            ProgramInputDef(key: variable.id, label: variable.label, unit: variable.unit,
+            ProgramInputDef(key: variable.id, label: variable.label,
+                            dimension: variable.dimension, unit: variable.unit,
                             defaultFromE1RMFactor: variable.e1rmFactor,
                             fallbackValue: variable.fallbackValue,
                             slotId: variable.slotId)
@@ -62,16 +63,20 @@ public enum ProgramBuilderCompiler {
                 initial: leaves.first?.id ?? "",
                 transitions: []))
         }
+        let hsm = ProgramHSMDef(
+            inputs: inputs,
+            initActions: initActions,
+            root: root,
+            previewBindings: compilePreviewBindings(expanded)
+        )
+        issues.append(contentsOf: ProgramExpressionValidator.validate(hsm).map {
+            .invalidExpression(path: $0.path, message: $0.message)
+        })
         // 展開でコピーごとに重複した issue(superset 制約等)は1つに畳む
         let deduped = issues.reduce(into: [BuilderIssue]()) { result, issue in
             if !result.contains(issue) { result.append(issue) }
         }
-        return Output(hsm: ProgramHSMDef(
-            inputs: inputs,
-            initActions: initActions,
-            root: root,
-            previewBindings: compilePreviewBindings(expanded)),
-                      issues: deduped)
+        return Output(hsm: hsm, issues: deduped)
     }
 
     // MARK: - ローテーション展開(ADR-0032)
@@ -564,14 +569,48 @@ public enum ProgramBuilderCompiler {
         LeafPhaseDef(
             id: phase.id,
             windowDays: phase.windowDays,
-            days: phase.days.map { day in
-                DayTemplateDef(label: day.label,
-                               dayPill: day.pill,
-                               blocks: day.groups.compactMap { compileGroup($0, issues: &issues) })
+            days: phase.days.map {
+                compileDay($0, issues: &issues)
             },
             transitions: [TransitionDef(guardExpr: e("1"),
                                         target: nextId,
                                         actions: phase.endRules.flatMap(compileRule))])
+    }
+
+    private static func compileDay(
+        _ day: BuilderDay,
+        issues: inout [BuilderIssue]
+    ) -> DayTemplateDef {
+        guard let sessions = day.sessions, !sessions.isEmpty else {
+            return DayTemplateDef(
+                label: day.label,
+                dayPill: day.pill,
+                blocks: day.groups.compactMap {
+                    compileGroup($0, issues: &issues)
+                }
+            )
+        }
+
+        let firstSessionID = sessions[0].id
+        return DayTemplateDef(
+            label: day.label,
+            dayPill: day.pill,
+            blocks: [],
+            sessions: sessions.map { session in
+                let groups = day.groups.filter {
+                    ($0.sessionID ?? firstSessionID) == session.id
+                }
+                return SessionTemplateDef(
+                    id: session.id,
+                    label: session.label,
+                    dayPill: session.pill,
+                    blocks: groups.compactMap {
+                        compileGroup($0, issues: &issues)
+                    },
+                    execution: session.execution
+                )
+            }
+        )
     }
 
     // MARK: - ブロック(グループ)
@@ -763,6 +802,12 @@ public enum ProgramBuilderCompiler {
         for phase in def.phases {
             for rule in phase.endRules {
                 let binding: ProgramPreviewBindingDef?
+                let missingMetricBehavior = phase.progressionPolicies?
+                    .first {
+                        $0.ruleId == rule.id
+                            || rule.id.hasPrefix("\($0.ruleId)__")
+                    }?
+                    .missingMetricBehavior ?? .maintain
                 switch rule {
                 case .progressIfReached(
                     let id, let varId, let measureId, let target, _
@@ -780,7 +825,10 @@ public enum ProgramBuilderCompiler {
                         label: variableLabels[varId] ?? varId,
                         measureId: measureId,
                         successExpr: e(targetSource),
-                        failureExpr: e("max(\(targetSource) - 1, 0)"))
+                        failureExpr: e("max(\(targetSource) - 1, 0)"),
+                        outcomeExpr: e("if(\(measureId) >= \(targetSource), 1, 0)"),
+                        trackedVariableIds: [varId],
+                        missingMetricBehavior: missingMetricBehavior)
 
                 case .progressByTable(
                     let id, let varId, let measureId, let steps
@@ -791,7 +839,12 @@ public enum ProgramBuilderCompiler {
                         label: variableLabels[varId] ?? varId,
                         measureId: measureId,
                         successExpr: .lit(steps.map(\.atLeast).max() ?? 1),
-                        failureExpr: .lit(0))
+                        failureExpr: .lit(0),
+                        outcomeExpr: e(
+                            "if(\(measureId) >= \(num(steps.map(\.atLeast).min() ?? 1)), 1, 0)"
+                        ),
+                        trackedVariableIds: [varId],
+                        missingMetricBehavior: missingMetricBehavior)
 
                 case .adjustByBand(
                     let id, let varId, let measureId,
@@ -804,7 +857,13 @@ public enum ProgramBuilderCompiler {
                         measureId: measureId,
                         successExpr: .lit(upper.nextUp),
                         failureExpr: .lit(
-                            max(lower.nextDown, Double.leastNonzeroMagnitude)))
+                            max(lower.nextDown, Double.leastNonzeroMagnitude)),
+                        outcomeExpr: e(
+                            "if(\(measureId) > \(num(upper)), 1, "
+                                + "if(\(measureId) < \(num(lower)) && \(measureId) > 0, -1, 0))"
+                        ),
+                        trackedVariableIds: [varId],
+                        missingMetricBehavior: missingMetricBehavior)
 
                 case .stageDemotion(
                     let id, let stageKey, let measureId,
@@ -818,7 +877,12 @@ public enum ProgramBuilderCompiler {
                         measureId: measureId,
                         successExpr: e(targetSource),
                         failureExpr: e(
-                            "max(min(\(targetSource), \(num(resetThreshold))) - 0.1, 0.1)"))
+                            "max(min(\(targetSource), \(num(resetThreshold))) - 0.1, 0.1)"),
+                        outcomeExpr: e(
+                            "if(\(measureId) >= \(targetSource), 1, -1)"
+                        ),
+                        trackedVariableIds: [weightVarId, stageKey],
+                        missingMetricBehavior: missingMetricBehavior)
 
                 case .always:
                     binding = nil
@@ -847,8 +911,52 @@ public enum ProgramBuilderCompiler {
 
         for phase in def.phases {
             var rulesToValidate = phase.endRules
+            let ruleIDs = Set(phase.endRules.map(\.id))
+            var policyRuleIDs = Set<String>()
+            for policy in phase.progressionPolicies ?? [] {
+                if !ruleIDs.contains(policy.ruleId) {
+                    issues.append(.invalidExpression(
+                        path: "phase.\(phase.id).progressionPolicies",
+                        message: "存在しない進行ルールです: \(policy.ruleId)"
+                    ))
+                } else if !policyRuleIDs.insert(policy.ruleId).inserted {
+                    issues.append(.invalidExpression(
+                        path: "phase.\(phase.id).progressionPolicies",
+                        message: "欠測ポリシーが重複しています: \(policy.ruleId)"
+                    ))
+                }
+            }
             for day in phase.days {
-                if day.groups.allSatisfy({ $0.entries.isEmpty }) {
+                if let sessions = day.sessions {
+                    let sessionIDs = sessions.map(\.id)
+                    let uniqueSessionIDs = Set(sessionIDs)
+                    if sessions.isEmpty {
+                        issues.append(.invalidExpression(
+                            path: "phase.\(phase.id).day.\(day.id).sessions",
+                            message: "セッションを1件以上設定してください"
+                        ))
+                    }
+                    if uniqueSessionIDs.count != sessionIDs.count {
+                        issues.append(.invalidExpression(
+                            path: "phase.\(phase.id).day.\(day.id).sessions",
+                            message: "セッションIDが重複しています"
+                        ))
+                    }
+                    for group in day.groups {
+                        if let sessionID = group.sessionID,
+                           !uniqueSessionIDs.contains(sessionID) {
+                            issues.append(.invalidExpression(
+                                path: "phase.\(phase.id).day.\(day.id).group.\(group.id)",
+                                message: "存在しないセッションです: \(sessionID)"
+                            ))
+                        }
+                    }
+                }
+                let hasExecution = day.sessions?.contains {
+                    $0.execution != nil
+                } ?? false
+                if day.groups.allSatisfy({ $0.entries.isEmpty })
+                    && !hasExecution {
                     issues.append(.emptyDay(phase: phase.label, day: day.label))
                 }
                 // 同じ実測名を複数の「日」で使うのは正当(bind はサイクルごとにクリア。SS/GZCLP と同形)。
@@ -901,9 +1009,34 @@ public enum ProgramBuilderCompiler {
                                 let kinds = Set(
                                     entry.slotIds.compactMap { slotKindByID[$0] }
                                 )
-                                if kinds.count > 1 {
-                                    issues.append(.mixedActivityKinds(entryId: entry.id))
-                                } else {
+                        if kinds.count > 1 {
+                            for variant in entry.variants {
+                                let expected =
+                                    slotKindByID[variant.slotId] ?? .strength
+                                let resolved = variant.targetOverride(
+                                    setGroupId: setGroup.id
+                                )?.resolve(target) ?? target
+                                if let actual =
+                                    resolved.activityPrescription?.kind,
+                                   actual != expected {
+                                    issues.append(
+                                        .activityPrescriptionMismatch(
+                                            entryId: entry.id,
+                                            expected: expected,
+                                            actual: actual
+                                        )
+                                    )
+                                } else if expected != .strength,
+                                          resolved.activityPrescription == nil {
+                                    issues.append(
+                                        .missingActivityPrescription(
+                                            entryId: entry.id,
+                                            expected: expected
+                                        )
+                                    )
+                                }
+                            }
+                        } else {
                                     let expected = kinds.first ?? .strength
                                     if let actual = target.activityPrescription?.kind,
                                        actual != expected {

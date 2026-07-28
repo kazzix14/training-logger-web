@@ -637,6 +637,67 @@ code {
   flex: 1;
 }
 
+.sessions-empty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px;
+  padding: 7px 9px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--weak);
+  font-size: 10px;
+}
+
+.sessions-panel {
+  margin: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #18181c;
+}
+
+.sessions-panel .subheading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sessions-panel .subheading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sessions-panel .subheading small {
+  color: var(--weak);
+  font-size: 9px;
+}
+
+.session-row {
+  align-items: flex-start;
+}
+
+.session-fields {
+  flex: 1;
+  grid-template-columns: 130px minmax(140px, 1fr) 92px;
+}
+
+.execution-json-field textarea {
+  min-height: 72px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.session-picker {
+  width: min(260px, 100%);
+  margin-bottom: 7px;
+}
+
 .block-card {
   margin: 8px;
   padding: 9px;

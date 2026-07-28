@@ -2,6 +2,52 @@ import XCTest
 @testable import TrainingLoggerCore
 
 final class ActivityDomainTests: XCTestCase {
+    func testTypedPrescriptionsPreserveCustomMetricsThroughCodable() throws {
+        let payloads: [ActivityPrescriptionPayload] = [
+            .strength(
+                StrengthPrescription(
+                    customMetrics: [
+                        .init(
+                            metricID: "source.distance",
+                            target: .exact(.init(5, unit: .kilometers))
+                        ),
+                    ]
+                )
+            ),
+            .running(
+                RunningPrescription(
+                    customMetrics: [
+                        .init(
+                            metricID: "source.load",
+                            target: .range(
+                                lower: .init(60, unit: .kilograms),
+                                upper: .init(70, unit: .kilograms)
+                            )
+                        ),
+                    ]
+                )
+            ),
+            .cycling(
+                CyclingPrescription(
+                    customMetrics: [
+                        .init(
+                            metricID: "source.repetitions",
+                            target: .exact(.init(8, unit: .count))
+                        ),
+                    ]
+                )
+            ),
+        ]
+
+        let data = try JSONEncoder().encode(payloads)
+        let decoded = try JSONDecoder().decode(
+            [ActivityPrescriptionPayload].self,
+            from: data
+        )
+
+        XCTAssertEqual(decoded, payloads)
+    }
+
     func testCustomMetricPreservesDefaultValue() throws {
         let metric = CustomMetricDefinition(
             id: "running.defaultPace",

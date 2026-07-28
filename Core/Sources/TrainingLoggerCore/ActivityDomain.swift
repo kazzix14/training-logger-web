@@ -33,6 +33,28 @@ public enum QuantityUnit: String, Codable, CaseIterable, Sendable {
     case rpe
     case scalar
 
+    public var symbol: String {
+        switch self {
+        case .kilograms: "kg"
+        case .pounds: "lb"
+        case .meters: "m"
+        case .kilometers: "km"
+        case .miles: "mi"
+        case .seconds: "秒"
+        case .minutes: "分"
+        case .hours: "時間"
+        case .secondsPerKilometer: "秒/km"
+        case .minutesPerKilometer: "分/km"
+        case .secondsPerMile: "秒/mi"
+        case .metersPerSecond: "m/s"
+        case .kilometersPerHour: "km/h"
+        case .count: "回"
+        case .ratio: "%"
+        case .rpe: "RPE"
+        case .scalar: ""
+        }
+    }
+
     public var dimension: QuantityDimension {
         switch self {
         case .kilograms, .pounds: .load
@@ -374,19 +396,22 @@ public struct StrengthPrescription: Codable, Equatable, Sendable {
     public var relativeLoad: StrengthRelativeLoadPrescription?
     public var repetitions: QuantityTarget
     public var targetRPE: QuantityTarget?
+    public var customMetrics: [CustomMetricPrescription]
 
     public init(
         sets: QuantityTarget? = nil,
         load: QuantityTarget = .open,
         relativeLoad: StrengthRelativeLoadPrescription? = nil,
         repetitions: QuantityTarget = .open,
-        targetRPE: QuantityTarget? = nil
+        targetRPE: QuantityTarget? = nil,
+        customMetrics: [CustomMetricPrescription] = []
     ) {
         self.sets = sets
         self.load = load
         self.relativeLoad = relativeLoad
         self.repetitions = repetitions
         self.targetRPE = targetRPE
+        self.customMetrics = customMetrics
     }
 }
 
@@ -406,6 +431,7 @@ public struct RunningPrescription: Codable, Equatable, Sendable {
     public var derivedField: RunningDerivedField?
     public var targetRPE: QuantityTarget?
     public var workoutLabel: String?
+    public var customMetrics: [CustomMetricPrescription]
 
     public init(
         distance: QuantityTarget? = nil,
@@ -413,7 +439,8 @@ public struct RunningPrescription: Codable, Equatable, Sendable {
         pace: PacePrescription = .open,
         derivedField: RunningDerivedField? = nil,
         targetRPE: QuantityTarget? = nil,
-        workoutLabel: String? = nil
+        workoutLabel: String? = nil,
+        customMetrics: [CustomMetricPrescription] = []
     ) {
         self.distance = distance
         self.duration = duration
@@ -421,6 +448,7 @@ public struct RunningPrescription: Codable, Equatable, Sendable {
         self.derivedField = derivedField
         self.targetRPE = targetRPE
         self.workoutLabel = workoutLabel
+        self.customMetrics = customMetrics
     }
 }
 
@@ -430,19 +458,22 @@ public struct CyclingPrescription: Codable, Equatable, Sendable {
     public var speed: QuantityTarget?
     public var derivedField: CyclingDerivedField?
     public var targetRPE: QuantityTarget?
+    public var customMetrics: [CustomMetricPrescription]
 
     public init(
         distance: QuantityTarget? = nil,
         duration: QuantityTarget? = nil,
         speed: QuantityTarget? = nil,
         derivedField: CyclingDerivedField? = nil,
-        targetRPE: QuantityTarget? = nil
+        targetRPE: QuantityTarget? = nil,
+        customMetrics: [CustomMetricPrescription] = []
     ) {
         self.distance = distance
         self.duration = duration
         self.speed = speed
         self.derivedField = derivedField
         self.targetRPE = targetRPE
+        self.customMetrics = customMetrics
     }
 }
 
@@ -457,6 +488,16 @@ public enum ActivityPrescriptionPayload: Codable, Equatable, Sendable {
         case .running: .running
         case .cycling: .cycling
         }
+    }
+}
+
+public struct CustomMetricPrescription: Codable, Equatable, Sendable {
+    public var metricID: String
+    public var target: QuantityTarget
+
+    public init(metricID: String, target: QuantityTarget) {
+        self.metricID = metricID
+        self.target = target
     }
 }
 
@@ -595,6 +636,117 @@ public indirect enum ExecutionNode: Codable, Equatable, Sendable {
     case rest(RestNode)
     case sequence(id: String, nodes: [ExecutionNode])
     case repeatNode(id: String, count: Int, node: ExecutionNode)
+}
+
+public struct ConcretePerformNode: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var activityID: String
+    public var prescription: ActivityPrescriptionPayload
+    public var note: String?
+
+    public init(
+        id: String,
+        activityID: String,
+        prescription: ActivityPrescriptionPayload,
+        note: String? = nil
+    ) {
+        self.id = id
+        self.activityID = activityID
+        self.prescription = prescription
+        self.note = note
+    }
+}
+
+public indirect enum ConcreteExecutionNode: Codable, Equatable, Sendable {
+    case perform(ConcretePerformNode)
+    case rest(RestNode)
+    case sequence(id: String, nodes: [ConcreteExecutionNode])
+
+    public var flattened: [ConcreteExecutionNode] {
+        switch self {
+        case .perform, .rest:
+            return [self]
+        case .sequence(_, let nodes):
+            return nodes.flatMap(\.flattened)
+        }
+    }
+}
+
+public enum ExecutionMaterializationError: Error, Equatable, Sendable {
+    case missingSlotChoice(String)
+    case invalidRepeatCount(id: String, count: Int)
+}
+
+public extension ExecutionNode {
+    /// repeatを具体ノードへ展開し、requirement参照を採用時の明示選択へ解決する。
+    /// 生成IDはテンプレートIDと反復位置だけから決まり、再生成しても安定する。
+    func materialized(
+        activityIDsBySlotID: [String: String]
+    ) throws -> ConcreteExecutionNode {
+        try materialized(
+            activityIDsBySlotID: activityIDsBySlotID,
+            path: []
+        )
+    }
+
+    private func materialized(
+        activityIDsBySlotID: [String: String],
+        path: [String]
+    ) throws -> ConcreteExecutionNode {
+        switch self {
+        case .perform(let node):
+            let activityID: String
+            switch node.activity {
+            case .fixed(let fixedID):
+                activityID = fixedID
+            case .requirement(let slotID, _, _):
+                guard let selectedID = activityIDsBySlotID[slotID] else {
+                    throw ExecutionMaterializationError.missingSlotChoice(slotID)
+                }
+                activityID = selectedID
+            }
+            return .perform(ConcretePerformNode(
+                id: (path + [node.id]).joined(separator: "/"),
+                activityID: activityID,
+                prescription: node.prescription,
+                note: node.note
+            ))
+
+        case .rest(var node):
+            node.id = (path + [node.id]).joined(separator: "/")
+            return .rest(node)
+
+        case .sequence(let id, let nodes):
+            let nextPath = path + [id]
+            return .sequence(
+                id: nextPath.joined(separator: "/"),
+                nodes: try nodes.map {
+                    try $0.materialized(
+                        activityIDsBySlotID: activityIDsBySlotID,
+                        path: nextPath
+                    )
+                }
+            )
+
+        case .repeatNode(let id, let count, let node):
+            guard count >= 0 else {
+                throw ExecutionMaterializationError.invalidRepeatCount(
+                    id: id,
+                    count: count
+                )
+            }
+            let repeatPath = path + [id]
+            return .sequence(
+                id: repeatPath.joined(separator: "/"),
+                nodes: try (0..<count).map { index in
+                    try node.materialized(
+                        activityIDsBySlotID: activityIDsBySlotID,
+                        path: repeatPath + ["\(index + 1)"]
+                    )
+                }
+            )
+        }
+    }
 }
 
 // MARK: - Estimation and progression
