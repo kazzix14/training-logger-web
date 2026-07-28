@@ -20,8 +20,8 @@ const {
   sideText,
 } = globalThis;
 
-const STORAGE_KEY = "traininglogger.program.builder.v1";
-const MODE_STORAGE_KEY = "traininglogger.program.builder.mode.v1";
+const STORAGE_KEY = "traininglogger.program.builder.v2";
+const MODE_STORAGE_KEY = "traininglogger.program.builder.mode.v2";
 const HISTORY_LIMIT = 100;
 const EXTRA_FIELD_KEYS = [
   "rpe.rpe",
@@ -2048,7 +2048,7 @@ class ProgramBuilder extends Component {
                 <div class="validation-ok">
                   <span>✓</span>
                   <strong>検証OK</strong>
-                  <p>traininglogger.program v1 として有効です。</p>
+                  <p>traininglogger.program v2 として有効です。</p>
                 </div>
               `}
         </div>
@@ -2170,7 +2170,7 @@ class ProgramBuilder extends Component {
           : html`
               <main class="invalid-envelope">
                 <h1>program を表示できません</h1>
-                <p>JSONエディタで traininglogger.program v1 を貼り付けてください。</p>
+                <p>JSONエディタで traininglogger.program v2 を貼り付けてください。</p>
                 ${errors.length
                   ? html`<ul>${errors.slice(0, 8).map(error => html`<li>${error}</li>`)}</ul>`
                   : null}

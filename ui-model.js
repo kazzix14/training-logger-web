@@ -421,7 +421,7 @@
   function minimalTemplate() {
     const envelope = {
       format: "traininglogger.program",
-      version: 1,
+      version: 2,
       program: {
         name: "新しいトレーニングプログラム",
         note: "",
