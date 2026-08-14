@@ -315,6 +315,20 @@ function entryVariants(entry) {
   }));
 }
 
+function slotUsageCount(program, slotId) {
+  let count = 0;
+  for (const phase of program.phases || []) {
+    for (const day of phase.days || []) {
+      for (const group of day.groups || []) {
+        for (const entry of group.entries || []) {
+          count += entryVariants(entry).filter(variant => variant.slotId === slotId).length;
+        }
+      }
+    }
+  }
+  return count;
+}
+
 function overrideCase(value) {
   if (value?.value) return "value";
   if (value?.none) return "none";
@@ -417,6 +431,10 @@ function optionsFrom(map) {
   return Object.entries(map).map(([value, label]) => html`<option value=${value}>${label}</option>`);
 }
 
+function closeContainingDetails(event) {
+  event.currentTarget.closest("details")?.removeAttribute("open");
+}
+
 function Button({ children, className = "", title, disabled = false, onClick }) {
   return html`
     <button
@@ -453,7 +471,17 @@ function TextField({
   list = "",
   hint = "",
 }) {
-  const handleInput = event => onInput(nullable && event.currentTarget.value === "" ? null : event.currentTarget.value);
+  // 日本語IMEの変換中にモデル全体を再描画すると、未確定文字や候補表示が
+  // 途切れる。変換が確定するまではブラウザに入力を任せ、確定時だけ反映する。
+  let composing = false;
+  const handleInput = event => {
+    if (composing || event.isComposing || event.nativeEvent?.isComposing) return;
+    onInput(nullable && event.currentTarget.value === "" ? null : event.currentTarget.value);
+  };
+  const handleCompositionEnd = event => {
+    composing = false;
+    handleInput(event);
+  };
   return html`
     <label class=${`field ${className}`}>
       <span>${label}</span>
@@ -463,6 +491,8 @@ function TextField({
               value=${value ?? ""}
               placeholder=${placeholder}
               data-focus=${focusKey}
+              onCompositionStart=${() => { composing = true; }}
+              onCompositionEnd=${handleCompositionEnd}
               onInput=${handleInput}
             ></textarea>
           `
@@ -473,6 +503,8 @@ function TextField({
               placeholder=${placeholder}
               list=${list || undefined}
               data-focus=${focusKey}
+              onCompositionStart=${() => { composing = true; }}
+              onCompositionEnd=${handleCompositionEnd}
               onInput=${handleInput}
             />
           `}
@@ -588,6 +620,7 @@ class ProgramBuilder extends Component {
       catalogOpen: false,
       catalogText: "",
       catalogError: null,
+      customExerciseInputs: {},
       validationErrors: null,
       validationEngine: "loading",
       templateName: "minimal",
@@ -842,12 +875,75 @@ class ProgramBuilder extends Component {
    * 種目UUID欄は残してあるので、カタログ無しで uuid 指定を続けたい場合は
    * そちらへ直接入れる。
    */
-  setExerciseName(path, value) {
+  setExerciseName(path, value, options = {}) {
+    const current = ui.getAtPath(this.state.envelope, path) || {};
     const { uuid } = catalogModel.resolveExerciseSelection(this.state.catalog, value);
-    const withName = ui.setValue(this.state.envelope, [...path, "exerciseName"], value);
-    this.commit(ui.setValue(withName, [...path, "exerciseUuid"], uuid), {
+    let next = ui.setValue(this.state.envelope, [...path, "exerciseName"], value);
+    next = ui.setValue(next, [...path, "exerciseUuid"], uuid);
+    const labelIsAutomatic =
+      !current.label?.trim() ||
+      current.label === current.exerciseName ||
+      current.label === "メイン種目" ||
+      current.label === "種目枠" ||
+      current.label === "新しい種目" ||
+      /^種目 \d+$/.test(current.label);
+    if (options.syncLabel && labelIsAutomatic) {
+      next = ui.setValue(next, [...path, "label"], value?.trim() || "新しい種目");
+    }
+    this.commit(next, {
       group: pathKey([...path, "exerciseName"]),
     });
+  }
+
+  focusSoon(focusKey) {
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        document.querySelector(`[data-focus="${focusKey}"]`)?.focus();
+      }, 0);
+    });
+  }
+
+  addExerciseEntry(groupPath) {
+    const slot = ui.createSlot(this.state.envelope);
+    slot.label = "新しい種目";
+    let next = ui.insertItem(this.state.envelope, ["program", "slots"], slot);
+    next = ui.addEntry(next, groupPath);
+    const entryIndex = (ui.getAtPath(next, [...groupPath, "entries"]) || []).length - 1;
+    const variantPath = [...groupPath, "entries", entryIndex, "variants", 0];
+    next = ui.setValue(next, [...variantPath, "slotId"], slot.id);
+    this.commit(next, { message: "種目を追加しました。名前をそのまま入力できます" });
+    this.focusSoon(`${pathKey(variantPath)}.exerciseName`);
+  }
+
+  addRotationExercise(entry, entryPath) {
+    const variants = entryVariants(entry);
+    const slot = ui.createSlot(this.state.envelope);
+    slot.label = "新しい種目";
+    const nextIndex = variants.length + 1;
+    const variantPath = [...entryPath, "variants", variants.length];
+    let next = ui.insertItem(this.state.envelope, ["program", "slots"], slot);
+    next = ui.setValue(next, [...entryPath, "variants"], [
+      ...variants,
+      {
+        id: `${entry.id}_v${nextIndex}`,
+        slotId: slot.id,
+        label: null,
+        methodologyId: { inherit: {} },
+        targetOverrides: [],
+        progressionRules: { inherit: {} },
+      },
+    ]);
+    this.commit(next, { message: "交互に使う種目を追加しました" });
+    this.focusSoon(`${pathKey(variantPath)}.exerciseName`);
+  }
+
+  detachVariantSlot(variantPath, slot) {
+    const fresh = structuredClone(slot);
+    fresh.id = ui.createSlot(this.state.envelope).id;
+    let next = ui.insertItem(this.state.envelope, ["program", "slots"], fresh);
+    next = ui.setValue(next, [...variantPath, "slotId"], fresh.id);
+    this.commit(next, { message: "この場所専用の種目に分けました" });
+    this.focusSoon(`${pathKey(variantPath)}.exerciseName`);
   }
 
   rename(path, value, referenceKeys) {
@@ -1041,41 +1137,47 @@ class ProgramBuilder extends Component {
   structureActions(arrayPath, index, label, options = {}) {
     const array = ui.getAtPath(this.state.envelope, arrayPath) || [];
     return html`
-      <div class="row-actions">
-        ${IconButton({
-          icon: "↑",
-          label: `${label}を上へ`,
-          disabled: index === 0,
-          onClick: () => this.mutate(envelope => ui.moveItem(envelope, arrayPath, index, -1)),
-        })}
-        ${IconButton({
-          icon: "↓",
-          label: `${label}を下へ`,
-          disabled: index === array.length - 1,
-          onClick: () => this.mutate(envelope => ui.moveItem(envelope, arrayPath, index, 1)),
-        })}
-        ${options.duplicate === false
-          ? null
-          : IconButton({
-              icon: "⧉",
-              label: `${label}を複製`,
-              onClick: () =>
-                this.mutate(envelope =>
-                  ui.duplicateStructure(envelope, arrayPath, index, {
+      <details class="row-action-menu">
+        <summary title=${`${label}の操作`} aria-label=${`${label}の操作`}>•••</summary>
+        <div class="row-action-popover">
+          ${Button({
+            children: "↑ 上へ移動",
+            disabled: index === 0,
+            onClick: event => {
+              closeContainingDetails(event);
+              this.mutate(envelope => ui.moveItem(envelope, arrayPath, index, -1));
+            },
+          })}
+          ${Button({
+            children: "↓ 下へ移動",
+            disabled: index === array.length - 1,
+            onClick: event => {
+              closeContainingDetails(event);
+              this.mutate(envelope => ui.moveItem(envelope, arrayPath, index, 1));
+            },
+          })}
+          ${options.duplicate === false
+            ? null
+            : Button({
+                children: "⧉ 複製",
+                onClick: event => {
+                  closeContainingDetails(event);
+                  this.mutate(envelope => ui.duplicateStructure(envelope, arrayPath, index, {
                     clearMeasures: options.clearMeasures,
-                  }),
-                ),
-            })}
-        ${IconButton({
-          icon: "×",
-          label: `${label}を削除`,
-          danger: true,
-          onClick: () =>
-            this.confirmDelete(label, () =>
-              this.mutate(envelope => ui.removeItem(envelope, arrayPath, index)),
-            ),
-        })}
-      </div>
+                  }));
+                },
+              })}
+          ${Button({
+            children: "× 削除",
+            className: "danger-action",
+            onClick: event => {
+              closeContainingDetails(event);
+              this.confirmDelete(label, () =>
+                this.mutate(envelope => ui.removeItem(envelope, arrayPath, index)));
+            },
+          })}
+        </div>
+      </details>
     `;
   }
 
@@ -1176,18 +1278,12 @@ class ProgramBuilder extends Component {
       <nav class="tree-pane" aria-label="プログラム構造">
         <div class="pane-title">
           <span>編集する場所</span>
-          <span class="count-badge">${phases.length} フェーズ</span>
+          <span class="count-badge">${phases.length} 期間</span>
         </div>
         <div class="tree-scroll">
           <div class="tree-setup">
             <button type="button" onClick=${() => this.scrollTo("program-overview")}>
               <span aria-hidden="true">1</span><strong>名前とメモ</strong>
-            </button>
-            <button type="button" onClick=${() => this.scrollTo("exercise-setup")}>
-              <span aria-hidden="true">2</span><strong>使う種目</strong>
-            </button>
-            <button type="button" onClick=${() => this.scrollTo("baseline-setup")}>
-              <span aria-hidden="true">3</span><strong>基準値</strong><small>必要な場合</small>
             </button>
           </div>
           <p class="tree-section-label">トレーニング内容</p>
@@ -1223,6 +1319,15 @@ class ProgramBuilder extends Component {
               </div>
             `,
           )}
+          <p class="tree-section-label tree-detail-label">必要なときだけ</p>
+          <div class="tree-setup tree-details">
+            <button type="button" onClick=${() => this.scrollTo("exercise-setup")}>
+              <span aria-hidden="true">⋯</span><strong>種目の共通設定</strong>
+            </button>
+            <button type="button" onClick=${() => this.scrollTo("baseline-setup")}>
+              <span aria-hidden="true">%</span><strong>割合計算の基準値</strong>
+            </button>
+          </div>
         </div>
         ${Button({
           children: "＋ 新しい期間を追加",
@@ -1251,19 +1356,18 @@ class ProgramBuilder extends Component {
     const checked = !coreLoading && errors.length === 0;
     const steps = [
       ["program-overview", "1", "名前をつける", "何のためのプログラムかを書く", hasName],
-      ["exercise-setup", "2", "種目を用意する", "具体的な種目、または選ぶ条件を登録", hasExercise],
-      ["phase-0", "3", "メニューを組む", "日ごとにセット・回数・重量を決める", hasMenu],
-      ["finish-check", "4", "仕上げを確認", "問題がなければアプリへ戻す", checked],
+      ["phase-0", "2", "メニューを作る", "種目名もセット・回数・重量もここで入力", hasExercise && hasMenu],
+      ["finish-check", "3", "仕上げを確認", "問題がなければアプリへ戻す", checked],
     ];
     return html`
       <section class="start-guide" aria-labelledby="start-guide-title">
         <div class="start-guide-heading">
           <div>
             <span class="eyebrow">はじめに</span>
-            <h1 id="start-guide-title">この順番で作れば大丈夫です</h1>
-            <p>必要なところだけ設定できます。わからない詳細項目は、最初は触らなくてかまいません。</p>
+            <h1 id="start-guide-title">3ステップで、そのまま作れます</h1>
+            <p>事前準備は不要です。メニューの中へ種目名を直接入力してください。</p>
           </div>
-          <span class="guide-progress">${steps.filter(step => step[4]).length} / 4</span>
+          <span class="guide-progress">${steps.filter(step => step[4]).length} / 3</span>
         </div>
         <ol class="guide-steps">
           ${steps.map(([id, number, title, description, done]) => html`
@@ -1433,9 +1537,9 @@ class ProgramBuilder extends Component {
       <section id="exercise-setup" class="editor-card" data-model-path="program.slots">
         <div class="section-heading">
           <div>
-            <span class="eyebrow">種目の準備</span>
-            <h2>このプログラムで使う種目</h2>
-            <p>種目を決めておくか、「脚の種目」のような条件だけを指定してアプリ側で選べます。</p>
+            <span class="eyebrow">必要なときだけ</span>
+            <h2>種目の共通設定</h2>
+            <p>メニューで入力した種目は、ここへ自動で追加されます。選択条件や筋肉、内部IDをまとめて直す場所です。</p>
           </div>
           ${Button({
             children: "＋ 種目を追加",
@@ -1727,6 +1831,110 @@ class ProgramBuilder extends Component {
     return fields;
   }
 
+  renderInlineExercisePicker(program, variant, variantPath) {
+    const slotIndex = (program.slots || []).findIndex(slot => slot.id === variant.slotId);
+    const slot = program.slots?.[slotIndex];
+    if (!slot) {
+      return SelectField({
+        label: "行う種目",
+        value: variant.slotId,
+        focusKey: `${pathKey(variantPath)}.slotId`,
+        onInput: value => this.update([...variantPath, "slotId"], value),
+        children: (program.slots || []).map(item =>
+          html`<option value=${item.id}>${item.exerciseName || item.label || item.id}</option>`),
+      });
+    }
+
+    const slotPath = ["program", "slots", slotIndex];
+    const focusKey = `${pathKey(variantPath)}.exerciseName`;
+    const kind = slot.activityRequirement?.fact?._0?.kind?._0 || "";
+    const candidates = this.state.catalog
+      ? catalogModel.candidateNames(this.state.catalog, kind)
+      : [];
+    const known = candidates.includes(slot.exerciseName);
+    const customOpen =
+      !this.state.catalog ||
+      Boolean(slot.exerciseName && !known) ||
+      Boolean(this.state.customExerciseInputs[focusKey]);
+    const usageCount = slotUsageCount(program, slot.id);
+
+    return html`
+      <div class="inline-exercise-picker">
+        ${this.state.catalog
+          ? html`
+              <label class="field select-field">
+                <span>行う種目</span>
+                <select
+                  value=${known ? slot.exerciseName : customOpen ? "__custom__" : ""}
+                  onInput=${event => {
+                    const value = event.currentTarget.value;
+                    if (value === "__custom__") {
+                      this.setState(state => ({
+                        customExerciseInputs: {
+                          ...state.customExerciseInputs,
+                          [focusKey]: true,
+                        },
+                      }), () => this.focusSoon(focusKey));
+                      return;
+                    }
+                    this.setState(state => ({
+                      customExerciseInputs: {
+                        ...state.customExerciseInputs,
+                        [focusKey]: false,
+                      },
+                    }));
+                    this.setExerciseName(slotPath, value || null, { syncLabel: true });
+                  }}
+                >
+                  <option value="">アプリで使うときに選ぶ</option>
+                  ${candidates.map(name => html`<option value=${name}>${name}</option>`)}
+                  <option value="__custom__">一覧にない名前を直接入力…</option>
+                </select>
+                <small class="input-hint">クリックするとアプリの種目が一覧で出ます</small>
+              </label>
+              ${customOpen
+                ? TextField({
+                    label: "種目名を直接入力",
+                    value: slot.exerciseName,
+                    nullable: true,
+                    placeholder: "例：ベンチプレス",
+                    focusKey,
+                    onInput: value => this.setExerciseName(slotPath, value, { syncLabel: true }),
+                  })
+                : null}
+            `
+          : html`
+              ${TextField({
+                label: "行う種目",
+                value: slot.exerciseName,
+                nullable: true,
+                placeholder: "ここに種目名を直接入力",
+                focusKey,
+                hint: "入力した名前はメニュー表示にも自動で反映します",
+                onInput: value => this.setExerciseName(slotPath, value, { syncLabel: true }),
+              })}
+              <button
+                type="button"
+                class="catalog-inline-button"
+                onClick=${() => this.setState({ catalogOpen: true, catalogError: null })}
+              >アプリの種目から選べるようにする</button>
+            `}
+        ${usageCount > 1
+          ? html`
+              <div class="shared-slot-note">
+                <span>この種目は${usageCount}か所で共通です。名前を変えるとすべてに反映されます。</span>
+                ${Button({
+                  children: "この場所だけ分ける",
+                  className: "small",
+                  onClick: () => this.detachVariantSlot(variantPath, slot),
+                })}
+              </div>
+            `
+          : null}
+      </div>
+    `;
+  }
+
   renderEntries(program, group, groupPath) {
     return html`
       <div class="entries-panel">
@@ -1736,9 +1944,9 @@ class ProgramBuilder extends Component {
             <small>2種目以上にするとスーパーセットになります。</small>
           </div>
           ${Button({
-            children: "＋ 種目を並べる",
+            children: "＋ 種目を追加",
             className: "small",
-            onClick: () => this.mutate(envelope => ui.addEntry(envelope, groupPath)),
+            onClick: () => this.addExerciseEntry(groupPath),
           })}
         </div>
         ${(group.entries || []).map((entry, entryIndex) => {
@@ -1747,25 +1955,40 @@ class ProgramBuilder extends Component {
             <article class="entry-card" data-model-path=${pathKey(path)}>
               <div class="entry-card-heading">
                 <strong><span>${entryIndex + 1}</span> 種目 ${entryIndex + 1}</strong>
-                <div class="row-actions">
-                  ${IconButton({
-                    icon: "↑", label: "種目を上へ", disabled: entryIndex === 0,
-                    onClick: () => this.mutate(envelope => ui.moveEntry(envelope, groupPath, entryIndex, -1)),
+                <details class="row-action-menu">
+                  <summary title="種目の操作" aria-label="種目の操作">•••</summary>
+                  <div class="row-action-popover">
+                  ${Button({
+                    children: "↑ 上へ移動", disabled: entryIndex === 0,
+                    onClick: event => {
+                      closeContainingDetails(event);
+                      this.mutate(envelope => ui.moveEntry(envelope, groupPath, entryIndex, -1));
+                    },
                   })}
-                  ${IconButton({
-                    icon: "↓", label: "種目を下へ", disabled: entryIndex === group.entries.length - 1,
-                    onClick: () => this.mutate(envelope => ui.moveEntry(envelope, groupPath, entryIndex, 1)),
+                  ${Button({
+                    children: "↓ 下へ移動", disabled: entryIndex === group.entries.length - 1,
+                    onClick: event => {
+                      closeContainingDetails(event);
+                      this.mutate(envelope => ui.moveEntry(envelope, groupPath, entryIndex, 1));
+                    },
                   })}
-                  ${IconButton({
-                    icon: "⧉", label: "種目を複製",
-                    onClick: () => this.mutate(envelope => ui.duplicateEntry(envelope, groupPath, entryIndex)),
+                  ${Button({
+                    children: "⧉ 複製",
+                    onClick: event => {
+                      closeContainingDetails(event);
+                      this.mutate(envelope => ui.duplicateEntry(envelope, groupPath, entryIndex));
+                    },
                   })}
-                  ${IconButton({
-                    icon: "×", label: "種目を削除", danger: true,
-                    onClick: () => this.confirmDelete("種目", () =>
-                      this.mutate(envelope => ui.removeEntry(envelope, groupPath, entryIndex))),
+                  ${Button({
+                    children: "× 削除", className: "danger-action",
+                    onClick: event => {
+                      closeContainingDetails(event);
+                      this.confirmDelete("種目", () =>
+                        this.mutate(envelope => ui.removeEntry(envelope, groupPath, entryIndex)));
+                    },
                   })}
-                </div>
+                  </div>
+                </details>
               </div>
               ${this.renderEntryVariants(program, entry, path)}
               ${AdvancedSettings({
@@ -1805,28 +2028,30 @@ class ProgramBuilder extends Component {
               <div class="variant-card" data-model-path=${pathKey(path)}>
                 ${variants.length > 1 ? html`<span class="variant-number">${index + 1}</span>` : null}
                 <div class="variant-basic-grid">
-                  ${SelectField({
-                    label: "どの種目を行う？",
-                    value: variant.slotId,
-                    focusKey: `${pathKey(path)}.slotId`,
-                    onInput: value => this.update([...path, "slotId"], value),
-                    children: (program.slots || []).map(slot =>
-                      html`<option value=${slot.id}>${slot.label || slot.id}</option>`),
-                  })}
+                  ${this.renderInlineExercisePicker(program, variant, path)}
                   ${TextField({
-                    label: "この場所だけの表示名（任意）",
+                    label: "この場所だけの呼び名（任意）",
                     value: variant.label,
                     nullable: true,
-                    placeholder: "例：テンポスクワット",
+                    placeholder: "通常は空欄でOK",
+                    hint: "例：同じスクワットを「軽い日」と表示したい場合",
                     focusKey: `${pathKey(path)}.label`,
                     onInput: value => this.update([...path, "label"], value || null),
                   })}
                 </div>
                 ${AdvancedSettings({
-                  title: "このローテーションだけの進行設定",
+                  title: "この種目だけの詳細設定",
                   description: "通常は共通設定を使います",
                   children: html`
                     <div class="advanced-grid">
+                      ${SelectField({
+                        label: "登録済みの別の種目へ切り替える",
+                        value: variant.slotId,
+                        focusKey: `${pathKey(path)}.slotId`,
+                        onInput: value => this.update([...path, "slotId"], value),
+                        children: (program.slots || []).map(slot =>
+                          html`<option value=${slot.id}>${slot.exerciseName || slot.label || slot.id}</option>`),
+                      })}
                       ${SelectField({
                         label: "トレーニング体系",
                         value: methodologyMode,
@@ -1866,38 +2091,24 @@ class ProgramBuilder extends Component {
                     </div>
                   `,
                 })}
-                ${IconButton({
-                  icon: "×",
-                  label: "ローテーションから削除",
-                  danger: true,
-                  disabled: variants.length <= 1,
-                  onClick: () =>
-                    this.update(
-                      variantsPath,
-                      variants.filter((_, variantIndex) => variantIndex !== index),
-                    ),
-                })}
+                ${variants.length > 1
+                  ? Button({
+                      children: "この候補を削除",
+                      className: "small danger-action variant-remove",
+                      onClick: () => this.update(
+                        variantsPath,
+                        variants.filter((_, variantIndex) => variantIndex !== index),
+                      ),
+                    })
+                  : null}
               </div>
             `;
           })}
         </div>
         ${Button({
-          children: variants.length > 1 ? "＋ ローテーションに種目を追加" : "＋ この場所で種目を交互に使う",
+          children: variants.length > 1 ? "＋ 交互に使う種目を追加" : "＋ 同じ場所で別の種目と交互に使う",
           className: "small rotation-add",
-          onClick: () => {
-            const nextIndex = variants.length + 1;
-            this.update(variantsPath, [
-              ...variants,
-              {
-                id: `${entry.id}_v${nextIndex}`,
-                slotId: program.slots?.[0]?.id || "",
-                label: null,
-                methodologyId: { inherit: {} },
-                targetOverrides: [],
-                progressionRules: { inherit: {} },
-              },
-            ]);
-          },
+          onClick: () => this.addRotationExercise(entry, entryPath),
         })}
       </div>
     `;
@@ -3612,8 +3823,6 @@ class ProgramBuilder extends Component {
                 <main class="editor-pane">
                   ${this.renderStartGuide(program, errors, coreLoading)}
                   ${this.renderOverview(program)}
-                  ${this.renderSlots(program)}
-                  ${this.renderVariables(program)}
                   <datalist id="slot-id-list">
                     ${(program.slots || []).map(slot => html`<option value=${slot.id}></option>`)}
                   </datalist>
@@ -3642,6 +3851,8 @@ class ProgramBuilder extends Component {
                           })}
                         </section>
                   `}
+                  ${this.renderSlots(program)}
+                  ${this.renderVariables(program)}
                 </main>
                 ${this.renderValidation(errors, coreLoading)}
               </div>
