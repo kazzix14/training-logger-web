@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 import TrainingLoggerCore
 
 // C ABI used by wasm-core.js. The allocation is implemented with Swift's

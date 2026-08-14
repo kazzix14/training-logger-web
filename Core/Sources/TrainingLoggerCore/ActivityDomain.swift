@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // MARK: - Typed quantities
 

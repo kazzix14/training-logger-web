@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // プログラムビルダーの中間表現(ADR-0031)。ユーザー操作の正であり、
 // ProgramBuilderCompiler が ProgramHSMDef + スロット仕様へ決定論的にコンパイルする。

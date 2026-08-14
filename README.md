@@ -16,6 +16,10 @@ GitHub Pages: https://kazzix14.github.io/training-logger-web/
   Swift コア。`CoreValidation.validate` が JSON エンベロープ検証の入口
 - `CoreWasm` は共有コアを JSON 文字列 in/out の C ABI で公開する WASI
   reactor。GitHub Actions が SwiftWasm SDK で `core.wasm` を生成する
+- 共有コアは非 Darwin では `FoundationEssentials` を読む。素の
+  `import Foundation` を足すと ICU のデータ(35MB)ごと wasm に入るので、
+  新しいファイルでも `#if canImport(FoundationEssentials)` の形を守る
+  (ADR-0079)
 - `wasm-core.js` は vendored `@bjorn3/browser_wasi_shim` で wasm を初期化し、
   検証結果を UI に渡す
 - JS フォールバックは廃止済み。wasm が未ロード・取得不可・実行失敗の場合は

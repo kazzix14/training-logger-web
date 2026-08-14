@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 public struct ExprParseError: Error, Equatable, CustomStringConvertible {
     public let message: String

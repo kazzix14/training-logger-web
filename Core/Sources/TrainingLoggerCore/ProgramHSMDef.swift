@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // v4 プログラム定義: データのみ（HSM + DayTemplate + Expr、ADR-0017、仕様 §5）。
 // ProgramDef.hsmData に JSON で保存する Codable 構造。JS script を置き換える。

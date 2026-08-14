@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// 計算式が見るスコープ。本体の深さと1:1（v4 統合構造仕様 §4、ADR-0016）
 public enum ExprScope: String, Codable, CaseIterable, Sendable {

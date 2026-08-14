@@ -54,20 +54,27 @@ jobs:
             -Xlinker --export=tl_program_fixture \
             -Xlinker --export=tl_free_result \
             -Xlinker --strip-all
-      - name: Shrink core.wasm (wasm-opt)
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq binaryen || true
-          true
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq binaryen
       - name: Stage core.wasm
         run: |
           wasm_path="$(find Core/.build -type f -name CoreWasm.wasm -path '*/release/*' -print -quit)"
           test -n "$wasm_path"
-          if command -v wasm-opt >/dev/null; then
-            wasm-opt -Oz "$wasm_path" -o core.wasm || cp "$wasm_path" core.wasm
+          # wasm-opt の失敗を握り潰すと未最適化の wasm が黙って公開されるので、
+          # フォールバックは残しつつ warning で必ず気付けるようにする
+          if wasm-opt -Oz --enable-bulk-memory --enable-sign-ext \
+              "$wasm_path" -o core.wasm; then
+            echo "wasm-opt -Oz: ok"
           else
+            echo "::warning::wasm-opt に失敗したため未最適化の wasm を公開します"
             cp "$wasm_path" core.wasm
           fi
-          ls -la core.wasm
+          # サイズは黙って増えるので毎回ログに残す。data 節が跳ねていたら
+          # Foundation 経由で ICU を巻き込んでいる (ADR-0079)
+          before=$(stat -c%s "$wasm_path")
+          after=$(stat -c%s core.wasm)
+          gzipped=$(gzip -9 -c core.wasm | wc -c)
+          echo "core.wasm: build=${before}B opt=${after}B gzip=${gzipped}B"
       - uses: actions/setup-node@v4
         with:
           node-version: 22

@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// Alex Viada, The Ultimate Hybrid Athlete の表「STRENGTH + 5K」を
 /// 共有Coreの型だけで表したfixture。iOSプリセットとWeb/Core検証の正にする。

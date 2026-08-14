@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// Program V2 の数値式を、表示単位や変数名から推測せずに検証する。
 ///

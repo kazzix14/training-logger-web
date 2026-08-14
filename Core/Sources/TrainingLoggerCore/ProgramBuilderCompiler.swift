@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials) && !canImport(Darwin)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 // BuilderDef → ProgramHSMDef のコンパイラ(ADR-0031)。
 // 生成する式はプリセット5本のイディオムと同形にする:
