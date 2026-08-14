@@ -7,6 +7,9 @@ GitHub Pages: https://kazzix14.github.io/training-logger-web/
   (フラグメントはサーバーに送信されない)
 - 形式は traininglogger.program v2(本体リポジトリ docs/formats/program-json.md)
 - 編集後は「JSONをコピー」してアプリの「JSONを読み込む」へ貼り戻す
+- アプリの 設定 → データ管理 →「Web用に種目リストをコピー」を
+  ヘッダの「種目リスト」へ貼ると、種目名が候補選択になり、アプリに無い
+  種目名を検証で指摘する(ADR-0080)。カタログはこのブラウザに保存される
 
 本体リポジトリの submodule (`web/`) として管理し、push で Pages に自動デプロイされる。
 
@@ -38,6 +41,8 @@ Pages CI の `wasm` ジョブで行う。
 ```sh
 node test.mjs
 node test-ui.mjs
+node test-reader.mjs
+node test-catalog.mjs
 node test-parity.mjs # core.wasm がなければ skip
 (cd Core && swift build)
 ```

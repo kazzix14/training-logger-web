@@ -1221,6 +1221,57 @@ code {
   font-size: 10px;
 }
 
+/* 種目カタログ（ADR-0080） */
+.catalog-summary {
+  margin: 0;
+  font-size: 10px;
+  color: var(--weak);
+}
+
+.field-with-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field-hint {
+  margin: 0;
+  font-size: 10px;
+  color: var(--weak);
+}
+
+.field-hint.warn {
+  color: var(--warning);
+}
+
+.muscle-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.muscle-chips .chip {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--weak);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.muscle-chips .chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.header-actions .needs-attention {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .invalid-envelope {
   max-width: 600px;
   margin: 0 auto;

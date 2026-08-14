@@ -109,13 +109,18 @@ export async function programFixtureWithWasm(key) {
   }
 }
 
-export async function validateWithWasm(envelopeObj, knownNames = []) {
+/**
+ * @param {unknown} envelopeObj
+ * @param {{names: string[], uuids: string[]}|string[]} knownExercises
+ *   既知種目。配列を渡した場合は名前のみとして扱う（ADR-0080）
+ */
+export async function validateWithWasm(envelopeObj, knownExercises = []) {
   const exports = await loadCore();
   if (!exports) return null;
 
   const encoder = new TextEncoder();
   const envelopeBytes = encoder.encode(JSON.stringify(envelopeObj));
-  const namesBytes = encoder.encode(JSON.stringify(knownNames));
+  const namesBytes = encoder.encode(JSON.stringify(knownExercises));
   let envelopePointer;
   let namesPointer;
   let resultPointer;

@@ -33,7 +33,8 @@ public enum CoreValidation {
     /// JSON バイト列 → 指摘一覧。デコード・形式・種目存在・コンパイル・数値妥当性を
     /// アプリのインポートと同じ順で検査する
     public static func validate(envelopeJSON: Data,
-                                knownExerciseNames: [String]) -> [String] {
+                                knownExerciseNames: [String],
+                                knownExerciseUuids: [String] = []) -> [String] {
         let envelope: ProgramTransferEnvelope
         do {
             envelope = try JSONDecoder().decode(ProgramTransferEnvelope.self, from: envelopeJSON)
@@ -53,9 +54,12 @@ public enum CoreValidation {
         var issues: [String] = []
         let bundled = envelope.bundledActivities ?? []
         let bundledNames = Set(bundled.map(\.name))
-        issues.append(contentsOf: missingExerciseNames(
-            envelope.program, knownNames: Set(knownExerciseNames).union(bundledNames))
-            .map { "存在しない種目があります: \($0)" })
+        let bundledIDs = Set(bundled.map(\.id))
+        issues.append(contentsOf: missingExerciseSlots(
+            envelope.program,
+            knownNames: Set(knownExerciseNames).union(bundledNames),
+            knownUuids: Set(knownExerciseUuids).union(bundledIDs))
+            .map { "存在しない種目があります: \($0.name)（program.slots[\($0.index)]）" })
         issues.append(contentsOf: bundledActivityFindings(bundled))
         let compilation = ProgramBuilderCompiler.compile(envelope.program)
         issues.append(contentsOf: compilation.issues.map(\.description))
@@ -63,12 +67,28 @@ public enum CoreValidation {
         return issues
     }
 
-    /// 名前指定なのに既知の種目に無い枠（exerciseName = nil の条件枠は対象外）
+    /// 名前指定なのに既知の種目に無い枠（exerciseName = nil の条件枠は対象外）。
+    ///
+    /// uuid が既知なら名前の不一致は許す。アプリのインポート
+    /// （`ProgramTransfer.importJSON`）と同じ規則にするためで、
+    /// これが無いと「アプリ側で改名した種目」が Web だけエラーになる（ADR-0080）
     public static func missingExerciseNames(_ def: BuilderDef,
-                                            knownNames: Set<String>) -> [String] {
-        def.slots.compactMap { slot in
+                                            knownNames: Set<String>,
+                                            knownUuids: Set<String> = []) -> [String] {
+        missingExerciseSlots(def, knownNames: knownNames, knownUuids: knownUuids)
+            .map(\.name)
+    }
+
+    /// 同上。指摘から編集箇所へ移動できるよう枠の位置も返す
+    public static func missingExerciseSlots(
+        _ def: BuilderDef,
+        knownNames: Set<String>,
+        knownUuids: Set<String> = []
+    ) -> [(index: Int, name: String)] {
+        def.slots.enumerated().compactMap { index, slot in
+            if let uuid = slot.exerciseUuid, knownUuids.contains(uuid) { return nil }
             guard let name = slot.exerciseName, !name.isEmpty else { return nil }
-            return knownNames.contains(name) ? nil : name
+            return knownNames.contains(name) ? nil : (index, name)
         }
     }
 

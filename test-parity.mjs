@@ -100,14 +100,44 @@ if (!existsSync(wasmPath)) {
       phase.days[0].id = "day-2";
       envelope.program.phases.push(phase);
     }),
+    // ADR-0080: カタログを渡したときだけ既知種目の照合が働く
+    {
+      ...fixture("カタログに無い種目名", envelope => {
+        envelope.program.slots[0].exerciseName = "存在しない種目";
+        envelope.program.slots[0].exerciseUuid = null;
+      }, "存在しない種目があります"),
+      known: { names: ["ベンチプレス"], uuids: ["u-bench"] },
+    },
+    {
+      ...fixture("uuidが既知なら改名済みの名前でも通る", envelope => {
+        envelope.program.slots[0].exerciseName = "旧ベンチプレス";
+        envelope.program.slots[0].exerciseUuid = "u-bench";
+      }),
+      known: { names: ["ベンチプレス"], uuids: ["u-bench"] },
+    },
+    {
+      // 旧形式（名前の配列）も core が受ける
+      ...fixture("既知種目を配列で渡しても照合する", envelope => {
+        envelope.program.slots[0].exerciseName = "存在しない種目";
+        envelope.program.slots[0].exerciseUuid = null;
+      }, "存在しない種目があります"),
+      known: ["ベンチプレス"],
+    },
+    {
+      ...fixture("指摘には枠の位置が入る", envelope => {
+        envelope.program.slots[0].exerciseName = "存在しない種目";
+        envelope.program.slots[0].exerciseUuid = null;
+      }, "program.slots[0]"),
+      known: { names: [], uuids: [] },
+    },
   ];
 
   // JS 検証は廃止したため、wasm(Swiftコア)の結果を期待値と直接照合する。
   // expect: null = 指摘0件 / 文字列 = その語を含む指摘が1件以上
   let failureCount = 0;
   for (const testCase of cases) {
-    const knownNames = knownExerciseNames(testCase.envelope);
-    const wasmIssues = validateWithWasm(testCase.envelope, knownNames);
+    const known = testCase.known ?? { names: knownExerciseNames(testCase.envelope), uuids: [] };
+    const wasmIssues = validateWithWasm(testCase.envelope, known);
     const expect = testCase.expect ?? null;
     const ok = expect === null
       ? wasmIssues.length === 0
@@ -133,6 +163,7 @@ if (!existsSync(wasmPath)) {
   }
   console.log(`\n${cases.length}/${cases.length} wasm expectation cases passed`);
 
+  // 既知種目は {names, uuids}（ADR-0080）。旧形式の配列も core 側が受ける
   function validateWithWasm(envelope, knownNames) {
     const exports = instance.exports;
     const encoder = new TextEncoder();

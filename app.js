@@ -7,6 +7,7 @@ import { programFixtureWithWasm, validateWithWasm } from "./wasm-core.js";
 const html = htm.bind(h);
 const ui = globalThis.TrainingLoggerUIModel;
 const reader = globalThis.TrainingLoggerReaderModel;
+const catalogModel = globalThis.TrainingLoggerCatalogModel;
 const {
   b64urlDecode,
   b64urlEncode,
@@ -22,6 +23,9 @@ const {
 
 const STORAGE_KEY = "traininglogger.program.builder.v2";
 const MODE_STORAGE_KEY = "traininglogger.program.builder.mode.v2";
+const CATALOG_STORAGE_KEY = "traininglogger.exercise.catalog.v1";
+const EXERCISE_LIST_ID = "catalog-exercise-names";
+const MUSCLE_LIST_ID = "catalog-muscle-keys";
 const HISTORY_LIMIT = 100;
 const EXTRA_FIELD_KEYS = [
   "rpe.rpe",
@@ -240,11 +244,29 @@ function updateEndurancePrescription(activity, field, displayValue) {
   return next;
 }
 
-function knownExerciseNames(envelope) {
-  return (envelope?.program?.slots || [])
-    .map(slot => slot.exerciseName)
-    .filter(name => typeof name === "string" && name.length > 0);
+/**
+ * 検証へ渡す既知種目。カタログがあればアプリの種目一覧、無ければ
+ * プログラム自身の名前（= 実質チェックなし、従来の挙動）。
+ */
+function knownExercises(envelope, catalog) {
+  if (catalog) {
+    return {
+      names: catalogModel.exerciseNames(catalog),
+      uuids: catalogModel.exerciseUuids(catalog),
+    };
+  }
+  return {
+    names: (envelope?.program?.slots || [])
+      .map(slot => slot.exerciseName)
+      .filter(name => typeof name === "string" && name.length > 0),
+    uuids: [],
+  };
 }
+const KIND_LABELS = {
+  strength: "筋トレ",
+  running: "ランニング",
+  cycling: "サイクリング",
+};
 const RULE_LABELS = {
   progressIfReached: "達成で加重",
   always: "毎回加重",
@@ -432,7 +454,6 @@ function TextField({
             <textarea
               value=${value ?? ""}
               placeholder=${placeholder}
-              list=${list || undefined}
               data-focus=${focusKey}
               onInput=${handleInput}
             ></textarea>
@@ -442,6 +463,7 @@ function TextField({
               type="text"
               value=${value ?? ""}
               placeholder=${placeholder}
+              list=${list || undefined}
               data-focus=${focusKey}
               onInput=${handleInput}
             />
@@ -521,6 +543,10 @@ class ProgramBuilder extends Component {
       jsonOpen: false,
       jsonText: JSON.stringify(initial.envelope, null, 2),
       jsonErrors: [],
+      catalog: this.loadInitialCatalog(),
+      catalogOpen: false,
+      catalogText: "",
+      catalogError: null,
       validationErrors: null,
       validationEngine: "loading",
       templateName: "minimal",
@@ -563,6 +589,43 @@ class ProgramBuilder extends Component {
     return { envelope: ui.template("minimal"), status: null };
   }
 
+  /** アプリから貼り付けた種目カタログ（ADR-0080）。壊れていれば無いものとして続行する */
+  loadInitialCatalog() {
+    try {
+      const saved = localStorage.getItem(CATALOG_STORAGE_KEY);
+      if (!saved) return null;
+      return catalogModel.parseCatalog(saved).catalog;
+    } catch {
+      return null;
+    }
+  }
+
+  applyCatalog() {
+    const { catalog, error } = catalogModel.parseCatalog(this.state.catalogText);
+    if (error) {
+      this.setState({ catalogError: error });
+      return;
+    }
+    try {
+      localStorage.setItem(CATALOG_STORAGE_KEY, JSON.stringify(catalog));
+    } catch {
+      // 保存できなくてもこのセッションでは使えるので続行する。
+    }
+    // 検証のかけ直しは componentDidUpdate が catalog の変化を見て行う
+    this.setState({ catalog, catalogError: null, catalogOpen: false, catalogText: "" });
+    this.showStatus(`種目${catalogModel.candidateNames(catalog).length}件を読み込みました`);
+  }
+
+  clearCatalog() {
+    try {
+      localStorage.removeItem(CATALOG_STORAGE_KEY);
+    } catch {
+      // 消せなくても state 側を空にすれば照合は止まる。
+    }
+    this.setState({ catalog: null, catalogError: null, catalogText: "" });
+    this.showStatus("種目リストを消去しました");
+  }
+
   loadInitialMode(isSharedLink) {
     if (isSharedLink) return "reader";
     try {
@@ -597,6 +660,9 @@ class ProgramBuilder extends Component {
       }
       document.title = `${this.state.envelope?.program?.name || "名称未設定"} — TrainingLogger`;
       this.refreshValidation(this.state.envelope);
+    } else if (previousState.catalog !== this.state.catalog) {
+      // 既知種目の集合が変わると指摘も変わる（ADR-0080）
+      this.refreshValidation(this.state.envelope);
     }
     if (previousState.mode !== this.state.mode) {
       try {
@@ -620,7 +686,10 @@ class ProgramBuilder extends Component {
     // (JSフォールバックは廃止 — ユーザー方針 2026-07-27)
     const request = ++this.validationRequest;
     this.setState({ validationErrors: null, validationEngine: "loading" });
-    validateWithWasm(envelope, knownExerciseNames(envelope)).then(errors => {
+    validateWithWasm(
+      envelope,
+      knownExercises(envelope, this.state.catalog),
+    ).then(errors => {
       if (request !== this.validationRequest) return;
       if (errors === null) {
         this.setState({
@@ -634,9 +703,13 @@ class ProgramBuilder extends Component {
   }
 
   async validateCandidate(envelope) {
+    // 貼り付けの可否はカタログを使わずに判定する（ADR-0080）。
+    // カタログは端末に残るスナップショットなので、アプリで種目を足した直後は
+    // 古いままになる。そこで貼り付けを止めると、正しいプログラムが入らない。
+    // 種目名の不一致は検証パネル側で指摘する。
     const wasmErrors = await validateWithWasm(
       envelope,
-      knownExerciseNames(envelope),
+      knownExercises(envelope, null),
     );
     return wasmErrors
       ?? ["Swiftコアを読み込めませんでした。再読み込みしてください"];
@@ -715,6 +788,25 @@ class ProgramBuilder extends Component {
 
   update(path, value, group = pathKey(path)) {
     this.commit(ui.setValue(this.state.envelope, path, value), { group });
+  }
+
+  /**
+   * 種目名の更新（ADR-0080）。
+   *
+   * 種目名を同一性の正とし、`exerciseUuid` を常にそれへ追従させる（カタログが
+   * 無いときは null になる）。名前と uuid が食い違ったまま残ると、アプリの
+   * インポートは uuid を優先するため、画面の名前とは違う種目が入ってしまう。
+   * 名前を空にした枠は uuid も消えて条件枠へ戻る。
+   *
+   * 種目UUID欄は残してあるので、カタログ無しで uuid 指定を続けたい場合は
+   * そちらへ直接入れる。
+   */
+  setExerciseName(path, value) {
+    const { uuid } = catalogModel.resolveExerciseSelection(this.state.catalog, value);
+    const withName = ui.setValue(this.state.envelope, [...path, "exerciseName"], value);
+    this.commit(ui.setValue(withName, [...path, "exerciseUuid"], uuid), {
+      group: pathKey([...path, "exerciseName"]),
+    });
   }
 
   rename(path, value, referenceKeys) {
@@ -977,6 +1069,18 @@ class ProgramBuilder extends Component {
             onClick: () => this.copyJSON(),
           })}
           ${Button({ children: "共有リンクをコピー", onClick: () => this.copyLink() })}
+          ${readerMode
+            ? null
+            : Button({
+                children: this.state.catalog
+                  ? `種目リスト ${catalogModel.candidateNames(this.state.catalog).length}`
+                  : "種目リスト",
+                className: this.state.catalog ? "" : "needs-attention",
+                title: this.state.catalog
+                  ? `${formatExportedAt(this.state.catalog.exportedAt)}に取得した種目リスト`
+                  : "アプリの設定からコピーした種目リストを貼り付ける",
+                onClick: () => this.setState({ catalogOpen: true, catalogError: null }),
+              })}
           ${readerMode && errors.length
             ? Button({
                 children: `検証 ${errors.length}件`,
@@ -1259,14 +1363,20 @@ class ProgramBuilder extends Component {
                     focusKey: `${pathKey(path)}.label`,
                     onInput: value => this.update([...path, "label"], value),
                   })}
-                  ${TextField({
-                    label: "種目名",
-                    value: slot.exerciseName,
-                    nullable: true,
-                    placeholder: "未指定なら採用時に選択",
-                    focusKey: `${pathKey(path)}.exerciseName`,
-                    onInput: value => this.update([...path, "exerciseName"], value),
-                  })}
+                  <div class="field-with-hint">
+                    ${TextField({
+                      label: "種目名",
+                      value: slot.exerciseName,
+                      nullable: true,
+                      placeholder: "未指定なら採用時に選択",
+                      list: this.state.catalog
+                        ? exerciseListId(activityKind)
+                        : "",
+                      focusKey: `${pathKey(path)}.exerciseName`,
+                      onInput: value => this.setExerciseName(path, value),
+                    })}
+                    ${this.exerciseNameHint(slot, activityKind)}
+                  </div>
                   ${TextField({
                     label: "種目UUID",
                     value: slot.exerciseUuid,
@@ -1275,19 +1385,22 @@ class ProgramBuilder extends Component {
                     focusKey: `${pathKey(path)}.exerciseUuid`,
                     onInput: value => this.update([...path, "exerciseUuid"], value),
                   })}
-                  ${TextField({
-                    label: "筋肉キー（カンマ区切り）",
-                    value: (slot.muscleKeys || []).join(", "),
-                    focusKey: `${pathKey(path)}.muscleKeys`,
-                    onInput: value =>
-                      this.update(
-                        [...path, "muscleKeys"],
-                        value
-                          .split(",")
-                          .map(item => item.trim())
-                          .filter(Boolean),
-                      ),
-                  })}
+                  <div class="field-with-hint">
+                    ${TextField({
+                      label: "筋肉キー（カンマ区切り）",
+                      value: (slot.muscleKeys || []).join(", "),
+                      focusKey: `${pathKey(path)}.muscleKeys`,
+                      onInput: value =>
+                        this.update(
+                          [...path, "muscleKeys"],
+                          value
+                            .split(",")
+                            .map(item => item.trim())
+                            .filter(Boolean),
+                        ),
+                    })}
+                    ${this.renderMuscleChips(path, slot)}
+                  </div>
                   ${TextField({
                     label: "選択条件",
                     value: slot.conditionText,
@@ -3082,6 +3195,13 @@ class ProgramBuilder extends Component {
           ${coreLoading
             ? html`<p class="validation-summary">Swiftコア(wasm)を読み込み中…</p>`
             : null}
+          ${this.state.catalog || coreLoading
+            ? null
+            : html`
+                <p class="validation-summary">
+                  種目名は照合していません。「種目リスト」を読み込むと、アプリに無い種目名を指摘します。
+                </p>
+              `}
           ${errors.length
             ? html`
                 <p class="validation-summary">項目をクリックすると編集箇所へ移動します。</p>
@@ -3165,6 +3285,165 @@ class ProgramBuilder extends Component {
     `;
   }
 
+  /**
+   * 種目名・筋肉キーの入力候補（ADR-0080）。カタログが無ければ何も出さない。
+   * 種目名は枠の種目タイプごとに候補を分け、型の合わない種目を出さない。
+   */
+  renderCatalogDataLists() {
+    const catalog = this.state.catalog;
+    if (!catalog) return null;
+    const kinds = ["", ...catalogModel.KINDS];
+    return html`
+      ${kinds.map(
+        kind => html`
+          <datalist id=${exerciseListId(kind)}>
+            ${catalogModel.candidateNames(catalog, kind).map(
+              name => html`<option value=${name}></option>`,
+            )}
+          </datalist>
+        `,
+      )}
+      <datalist id=${MUSCLE_LIST_ID}>
+        ${(catalog.muscles || []).map(
+          muscle => html`<option value=${muscle.key}>${muscle.name}</option>`,
+        )}
+      </datalist>
+    `;
+  }
+
+  /**
+   * 種目名の状態を1行で伝える。カタログがあるときだけ出す（ADR-0080）。
+   * ここは検証（wasm）ではなく入力の手当てなので、指摘一覧には積まない。
+   */
+  /**
+   * 筋肉キーの候補（ADR-0080）。カンマ区切りの入力に datalist を付けても
+   * 2個目以降を補完できないので、閉じた集合をトグルとして出す。
+   */
+  renderMuscleChips(path, slot) {
+    const muscles = this.state.catalog?.muscles || [];
+    if (!muscles.length) return null;
+    const selected = new Set(slot.muscleKeys || []);
+    return html`
+      <div class="muscle-chips" role="group" aria-label="筋肉キーの候補">
+        ${muscles.map(
+          muscle => html`
+            <button
+              type="button"
+              class=${selected.has(muscle.key) ? "chip active" : "chip"}
+              aria-pressed=${selected.has(muscle.key)}
+              title=${muscle.key}
+              onClick=${() => this.toggleMuscleKey(path, muscle.key)}
+            >
+              ${muscle.name}
+            </button>
+          `,
+        )}
+      </div>
+    `;
+  }
+
+  toggleMuscleKey(path, key) {
+    const current = ui.getAtPath(this.state.envelope, [...path, "muscleKeys"]) || [];
+    const next = current.includes(key)
+      ? current.filter(item => item !== key)
+      : [...current, key];
+    this.update([...path, "muscleKeys"], next, `muscle:${pathKey(path)}`);
+  }
+
+  exerciseNameHint(slot, activityKind) {
+    const catalog = this.state.catalog;
+    if (!catalog || !slot.exerciseName) return null;
+    const { status, kind } = catalogModel.resolveExerciseSelection(
+      catalog,
+      slot.exerciseName,
+    );
+    if (status === "unknown") {
+      return html`<p class="field-hint warn">この名前の種目はアプリにありません</p>`;
+    }
+    if (status === "ambiguous") {
+      return html`
+        <p class="field-hint warn">
+          同名の種目が複数あるためUUIDを確定できません。アプリ側で名前を分けてください
+        </p>
+      `;
+    }
+    if (activityKind && kind && kind !== activityKind) {
+      return html`
+        <p class="field-hint warn">
+          種目タイプが${KIND_LABELS[activityKind] || activityKind}の枠に
+          ${KIND_LABELS[kind] || kind}の種目を指定しています
+        </p>
+      `;
+    }
+    return null;
+  }
+
+  renderCatalogDrawer() {
+    if (!this.state.catalogOpen) return null;
+    const catalog = this.state.catalog;
+    return html`
+      <div class="drawer-backdrop" onClick=${event => {
+        if (event.target === event.currentTarget) this.setState({ catalogOpen: false });
+      }}>
+        <aside class="json-drawer" aria-label="種目リスト">
+          <div class="drawer-heading">
+            <div>
+              <span class="eyebrow">CATALOG</span>
+              <h2>種目リスト</h2>
+            </div>
+            ${IconButton({
+              icon: "×",
+              label: "種目リストを閉じる",
+              onClick: () => this.setState({ catalogOpen: false }),
+            })}
+          </div>
+          <p class="drawer-hint">
+            アプリの 設定 → データ管理 →「Web用に種目リストをコピー」で取得したJSONを貼り付けます。
+            種目名が候補から選べるようになり、アプリに無い種目名は検証で指摘されます。
+          </p>
+          ${catalog
+            ? html`
+                <p class="catalog-summary">
+                  候補${catalogModel.candidateNames(catalog).length}件
+                  ${archivedCount(catalog)
+                    ? html`（ほかにアーカイブ済み${archivedCount(catalog)}件を照合に使用）`
+                    : null}
+                  ・筋肉${catalog.muscles.length}件
+                  ${catalog.exportedAt ? html` ・ ${formatExportedAt(catalog.exportedAt)}取得` : null}
+                </p>
+              `
+            : null}
+          <div class="drawer-actions">
+            ${Button({
+              children: "読み込む",
+              className: "primary",
+              onClick: () => this.applyCatalog(),
+            })}
+            ${catalog
+              ? Button({ children: "消去", onClick: () => this.clearCatalog() })
+              : null}
+          </div>
+          ${this.state.catalogError
+            ? html`
+                <div class="json-errors">
+                  <strong>読み込めません</strong>
+                  <ul><li>${this.state.catalogError}</li></ul>
+                </div>
+              `
+            : null}
+          <textarea
+            class="json-editor"
+            spellcheck="false"
+            data-json-editor="true"
+            placeholder='{"format":"traininglogger.catalog", …}'
+            value=${this.state.catalogText}
+            onInput=${event => this.setState({ catalogText: event.currentTarget.value })}
+          ></textarea>
+        </aside>
+      </div>
+    `;
+  }
+
   render() {
     const envelope = this.state.envelope;
     const candidateProgram = envelope?.program;
@@ -3236,9 +3515,26 @@ class ProgramBuilder extends Component {
               </main>
             `}
         ${this.renderJSONDrawer()}
+        ${this.renderCatalogDrawer()}
+        ${this.renderCatalogDataLists()}
       </div>
     `;
   }
+}
+
+function archivedCount(catalog) {
+  return (catalog?.exercises || []).filter(entry => entry.archived).length;
+}
+
+/** 種目タイプ別の候補リスト。kind が空なら全種目 */
+function exerciseListId(kind) {
+  return kind ? `${EXERCISE_LIST_ID}-${kind}` : EXERCISE_LIST_ID;
+}
+
+/** ISO8601 を「2026-08-14」まで縮める。日付として読めなければそのまま出す */
+function formatExportedAt(value) {
+  const match = /^(\d{4}-\d{2}-\d{2})/.exec(value);
+  return match ? match[1] : value;
 }
 
 render(h(ProgramBuilder, null), document.getElementById("app"));

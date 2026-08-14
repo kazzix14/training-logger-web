@@ -1,0 +1,40 @@
+{
+  "exercises" : [
+    {
+      "archived" : false,
+      "kind" : "strength",
+      "name" : "インクラインベンチプレス",
+      "uuid" : "u-incline"
+    },
+    {
+      "archived" : false,
+      "kind" : "running",
+      "name" : "ジョグ",
+      "uuid" : "u-jog"
+    },
+    {
+      "archived" : true,
+      "kind" : "strength",
+      "name" : "旧・レッグプレス",
+      "uuid" : "u-legpress"
+    },
+    {
+      "archived" : false,
+      "kind" : "cycling",
+      "name" : "自転車通勤"
+    }
+  ],
+  "exportedAt" : "2026-08-14T10:00:00Z",
+  "format" : "traininglogger.catalog",
+  "muscles" : [
+    {
+      "key" : "pecs",
+      "name" : "大胸筋"
+    },
+    {
+      "key" : "quads",
+      "name" : "大腿四頭筋"
+    }
+  ],
+  "version" : 1
+}

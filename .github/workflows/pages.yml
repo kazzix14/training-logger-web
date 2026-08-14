@@ -25,6 +25,7 @@ jobs:
       - run: node test.mjs
       - run: node test-ui.mjs
       - run: node test-reader.mjs
+      - run: node test-catalog.mjs
 
   wasm:
     runs-on: ubuntu-latest

@@ -31,8 +31,9 @@ public func tl_free_result(_ pointer: UnsafeMutablePointer<CChar>?) {
 /// Validates an envelope and returns a NUL-terminated UTF-8 JSON object:
 /// `{"issues":[String]}`.
 ///
-/// The two inputs are UTF-8 byte spans. `namesPtr` contains a JSON array of
-/// exercise names. Invalid name JSON is treated as an empty list.
+/// The two inputs are UTF-8 byte spans. `namesPtr` carries the known exercises as
+/// `{"names":[String],"uuids":[String]}`; a bare `[String]` is accepted as
+/// names-only (ADR-0080). Invalid JSON is treated as an empty catalog.
 @_cdecl("tl_validate")
 public func tl_validate(
     _ jsonPtr: UnsafePointer<UInt8>?,
@@ -41,15 +42,12 @@ public func tl_validate(
     _ namesLen: Int32
 ) -> UnsafePointer<CChar>? {
     let envelopeJSON = data(from: jsonPtr, length: jsonLen)
-    let knownExerciseNames =
-        (try? JSONDecoder().decode(
-            [String].self,
-            from: data(from: namesPtr, length: namesLen)
-        )) ?? []
+    let known = knownExercises(from: data(from: namesPtr, length: namesLen))
 
     let issues = CoreValidation.validate(
         envelopeJSON: envelopeJSON,
-        knownExerciseNames: knownExerciseNames
+        knownExerciseNames: known.names,
+        knownExerciseUuids: known.uuids
     )
     let payload = (try? JSONEncoder().encode(ValidationResult(issues: issues)))
         ?? Data(#"{"issues":["検証結果をJSONに変換できません"]}"#.utf8)
@@ -77,6 +75,23 @@ public func tl_program_fixture(
 
 private struct ValidationResult: Encodable {
     let issues: [String]
+}
+
+private struct KnownExercisesPayload: Decodable {
+    let names: [String]?
+    let uuids: [String]?
+}
+
+/// `{"names":[…],"uuids":[…]}` を読む。旧形式の `[String]` は名前のみとして扱う
+private func knownExercises(from payload: Data) -> (names: [String], uuids: [String]) {
+    let decoder = JSONDecoder()
+    if let object = try? decoder.decode(KnownExercisesPayload.self, from: payload) {
+        return (object.names ?? [], object.uuids ?? [])
+    }
+    if let names = try? decoder.decode([String].self, from: payload) {
+        return (names, [])
+    }
+    return ([], [])
 }
 
 private func data(
