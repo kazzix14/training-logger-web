@@ -7,6 +7,20 @@ import {
 
 let corePromise;
 
+/**
+ * core.wasm が公開していなければならない export。
+ * pages.yml の `-Xlinker --export=...` と 1:1 で対応する
+ * (test-parity.mjs が CI で照合し、リンカ側の追加漏れを検出する)。
+ */
+export const REQUIRED_CORE_EXPORTS = [
+  "memory",
+  "tl_alloc",
+  "tl_free",
+  "tl_validate",
+  "tl_program_fixture",
+  "tl_free_result",
+];
+
 async function instantiateCore() {
   const fds = [
     new OpenFile(new File([])),
@@ -36,15 +50,7 @@ async function instantiateCore() {
     instance.exports.__wasm_call_ctors();
   }
 
-  const requiredExports = [
-    "memory",
-    "tl_alloc",
-    "tl_free",
-    "tl_validate",
-    "tl_program_fixture",
-    "tl_free_result",
-  ];
-  for (const name of requiredExports) {
+  for (const name of REQUIRED_CORE_EXPORTS) {
     if (!(name in instance.exports)) {
       throw new Error(`core.wasm に ${name} export がありません`);
     }

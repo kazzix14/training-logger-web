@@ -18,9 +18,12 @@ GitHub Pages: https://kazzix14.github.io/training-logger-web/
   reactor。GitHub Actions が SwiftWasm SDK で `core.wasm` を生成する
 - `wasm-core.js` は vendored `@bjorn3/browser_wasi_shim` で wasm を初期化し、
   検証結果を UI に渡す
-- wasm が未ロード、取得不可、または実行失敗の場合は `logic.js` の同じ検証へ
-  自動的にフォールバックする。検証パネルの `wasm ⚙︎` / `js` が使用中の
-  エンジンを示す
+- JS フォールバックは廃止済み。wasm が未ロード・取得不可・実行失敗の場合は
+  検証パネルに「Swiftコアを読み込めませんでした」を出す(= 壊れたら丸ごと
+  使えない)
+- C ABI を追加するときは `@_cdecl` / `wasm-core.js` の
+  `REQUIRED_CORE_EXPORTS` / `pages.yml` の `-Xlinker --export=` の3点を
+  必ず揃える。揃っていないと CI の `test-parity.mjs` が落ちる(ADR-0074 追記)
 
 ローカル macOS に SwiftWasm ツールチェーンは不要。通常の SwiftPM ビルドで
 共有コアと ABI のコンパイルを確認し、wasm の生成と JS とのパリティ検査は

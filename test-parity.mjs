@@ -3,6 +3,7 @@ import { WASI } from "node:wasi";
 
 import logic from "./logic.js";
 import model from "./ui-model.js";
+import { REQUIRED_CORE_EXPORTS } from "./wasm-core.js";
 
 const wasmPath = new URL("./core.wasm", import.meta.url);
 
@@ -32,13 +33,9 @@ if (!existsSync(wasmPath)) {
     instance.exports.__wasm_call_ctors();
   }
 
-  for (const name of [
-    "memory",
-    "tl_alloc",
-    "tl_free",
-    "tl_validate",
-    "tl_free_result",
-  ]) {
+  // ブラウザ側 (wasm-core.js) と同じ export 契約で照合する。
+  // リンカの --export 追加漏れはここで落ちる。
+  for (const name of REQUIRED_CORE_EXPORTS) {
     if (!(name in instance.exports)) {
       throw new Error(`core.wasm に ${name} export がありません`);
     }

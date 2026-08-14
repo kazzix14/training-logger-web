@@ -51,6 +51,7 @@ jobs:
             -Xlinker --export=tl_alloc \
             -Xlinker --export=tl_free \
             -Xlinker --export=tl_validate \
+            -Xlinker --export=tl_program_fixture \
             -Xlinker --export=tl_free_result \
             -Xlinker --strip-all
       - name: Shrink core.wasm (wasm-opt)
