@@ -274,6 +274,13 @@ const RULE_LABELS = {
   adjustByBand: "帯で自動調整",
   stageDemotion: "ステージ降格",
 };
+const RULE_DESCRIPTIONS = {
+  progressIfReached: "目標回数を達成したときだけ、次回の基準値を増やす",
+  always: "結果にかかわらず、1周するたびに基準値を増やす",
+  progressByTable: "実際にできた回数に応じて、増やす量を変える",
+  adjustByBand: "結果が範囲より上なら増やし、下なら減らす",
+  stageDemotion: "ステージ目標に届かなければ難易度を戻し、必要なら基準値も下げる",
+};
 const REPS_LABELS = {
   fixed: "固定回数",
   amrap: "AMRAP",
@@ -444,6 +451,7 @@ function TextField({
   multiline = false,
   focusKey = "",
   list = "",
+  hint = "",
 }) {
   const handleInput = event => onInput(nullable && event.currentTarget.value === "" ? null : event.currentTarget.value);
   return html`
@@ -468,6 +476,7 @@ function TextField({
               onInput=${handleInput}
             />
           `}
+      ${hint ? html`<small class="input-hint">${hint}</small>` : null}
     </label>
   `;
 }
@@ -482,6 +491,7 @@ function NumberField({
   nullable = false,
   className = "",
   focusKey = "",
+  hint = "",
 }) {
   return html`
     <label class=${`field number-field ${className}`}>
@@ -495,11 +505,20 @@ function NumberField({
         data-focus=${focusKey}
         onInput=${event => onInput(asNumber(event.currentTarget.value, nullable))}
       />
+      ${hint ? html`<small class="input-hint">${hint}</small>` : null}
     </label>
   `;
 }
 
-function SelectField({ label, value, onInput, children, className = "", focusKey = "" }) {
+function SelectField({
+  label,
+  value,
+  onInput,
+  children,
+  className = "",
+  focusKey = "",
+  hint = "",
+}) {
   return html`
     <label class=${`field select-field ${className}`}>
       <span>${label}</span>
@@ -510,6 +529,7 @@ function SelectField({ label, value, onInput, children, className = "", focusKey
       >
         ${children}
       </select>
+      ${hint ? html`<small class="input-hint">${hint}</small>` : null}
     </label>
   `;
 }
@@ -529,6 +549,27 @@ function Toggle({ label, checked, onInput, className = "" }) {
 
 function EmptyHint({ children }) {
   return html`<p class="empty-hint">${children}</p>`;
+}
+
+function AdvancedSettings({ title = "詳細設定", description = "", children, open = false, className = "" }) {
+  return html`
+    <details class=${`advanced-settings ${className}`} open=${open || undefined}>
+      <summary>
+        <span>${title}</span>
+        ${description ? html`<small>${description}</small>` : null}
+      </summary>
+      <div class="advanced-settings-body">${children}</div>
+    </details>
+  `;
+}
+
+function Explanation({ title, children, tone = "info" }) {
+  return html`
+    <div class=${`explanation ${tone}`}>
+      <span aria-hidden="true">${tone === "tip" ? "✓" : "i"}</span>
+      <div><strong>${title}</strong><p>${children}</p></div>
+    </div>
+  `;
 }
 
 class ProgramBuilder extends Component {
@@ -889,7 +930,7 @@ class ProgramBuilder extends Component {
   copyJSON() {
     this.writeClipboard(
       JSON.stringify(this.state.envelope, null, 2),
-      "JSONをコピーしました",
+      "アプリへ戻すデータをコピーしました。TrainingLoggerの「JSONを読み込む」に貼り付けてください",
     );
   }
 
@@ -1046,17 +1087,16 @@ class ProgramBuilder extends Component {
           <span class="brand-mark">TL</span>
           <div>
             <strong>${program?.name || "名称未設定"}</strong>
-            <small>プログラムビルダー</small>
+            <small>${readerMode ? "完成イメージ" : "編集中・自動保存済み"}</small>
           </div>
         </div>
         <div class="header-actions">
           <div class="mode-switch" role="group" aria-label="表示モード">
             ${Button({
-              children: "閲覧",
+              children: html`<span class="desktop-label">完成イメージ</span><span class="mobile-label">確認</span>`,
               className: readerMode ? "active" : "",
               onClick: () => this.setMode("reader"),
             })}
-            <span aria-hidden="true">⇄</span>
             ${Button({
               children: "編集",
               className: readerMode ? "" : "active",
@@ -1064,48 +1104,22 @@ class ProgramBuilder extends Component {
             })}
           </div>
           ${Button({
-            children: "JSONをコピー",
+            children: html`<span class="desktop-label">アプリへ戻す</span><span class="mobile-label">戻す</span>`,
             className: "primary",
+            title: "TrainingLoggerへ貼り付けるJSONをコピー",
             onClick: () => this.copyJSON(),
           })}
-          ${Button({ children: "共有リンクをコピー", onClick: () => this.copyLink() })}
-          ${readerMode
-            ? null
-            : Button({
-                children: this.state.catalog
-                  ? `種目リスト ${catalogModel.candidateNames(this.state.catalog).length}`
-                  : "種目リスト",
-                className: this.state.catalog ? "" : "needs-attention",
-                title: this.state.catalog
-                  ? `${formatExportedAt(this.state.catalog.exportedAt)}に取得した種目リスト`
-                  : "アプリの設定からコピーした種目リストを貼り付ける",
-                onClick: () => this.setState({ catalogOpen: true, catalogError: null }),
-              })}
           ${readerMode && errors.length
             ? Button({
-                children: `検証 ${errors.length}件`,
+                children: `要確認 ${errors.length}件`,
                 className: "header-validation-badge",
-                title: "編集モードの検証パネルを開く",
+                title: "編集画面の仕上げチェックを開く",
                 onClick: () => this.setMode("edit", { focusValidation: true }),
               })
             : null}
           ${readerMode
-            ? null
+            ? Button({ children: "共有リンク", onClick: () => this.copyLink() })
             : html`
-                <div class="template-control">
-                  <select
-                    aria-label="テンプレート"
-                    value=${this.state.templateName}
-                    onInput=${event =>
-                      this.setState({ templateName: event.currentTarget.value })}
-                  >
-                      <option value="minimal">最小線形</option>
-                      <option value="531">5/3/1風</option>
-                      <option value="viada-strength-5k">Viada STRENGTH + 5K</option>
-                      <option value="viada-strength-5k-taper">Viada 5K · Taper/Deload</option>
-                  </select>
-                  ${Button({ children: "挿入", onClick: () => this.insertTemplate() })}
-                </div>
                 <div class="history-actions">
                   ${IconButton({
                     icon: "↶",
@@ -1120,6 +1134,37 @@ class ProgramBuilder extends Component {
                     onClick: () => this.redo(),
                   })}
                 </div>
+                <details class="header-menu">
+                  <summary>その他 <span aria-hidden="true">⌄</span></summary>
+                  <div class="header-menu-popover">
+                    <strong>データと共有</strong>
+                    ${Button({ children: "共有リンクをコピー", onClick: () => this.copyLink() })}
+                    ${Button({
+                      children: this.state.catalog
+                        ? `アプリの種目を更新（${catalogModel.candidateNames(this.state.catalog).length}件）`
+                        : "アプリの種目を読み込む",
+                      className: this.state.catalog ? "" : "needs-attention",
+                      onClick: () => this.setState({ catalogOpen: true, catalogError: null }),
+                    })}
+                    ${Button({ children: "JSONを直接編集", onClick: () => this.openJSON() })}
+                    <strong>テンプレートでやり直す</strong>
+                    <div class="template-control">
+                      <select
+                        aria-label="テンプレート"
+                        value=${this.state.templateName}
+                        onInput=${event =>
+                          this.setState({ templateName: event.currentTarget.value })}
+                      >
+                          <option value="minimal">シンプルな筋トレ</option>
+                          <option value="531">5/3/1風</option>
+                          <option value="viada-strength-5k">筋トレ + 5K</option>
+                          <option value="viada-strength-5k-taper">5K テーパー / デロード</option>
+                      </select>
+                      ${Button({ children: "置き換える", onClick: () => this.insertTemplate() })}
+                    </div>
+                    <small>現在の内容は置き換わりますが、取り消しで戻せます。</small>
+                  </div>
+                </details>
               `}
         </div>
       </header>
@@ -1130,10 +1175,22 @@ class ProgramBuilder extends Component {
     return html`
       <nav class="tree-pane" aria-label="プログラム構造">
         <div class="pane-title">
-          <span>構造</span>
+          <span>編集する場所</span>
           <span class="count-badge">${phases.length} フェーズ</span>
         </div>
         <div class="tree-scroll">
+          <div class="tree-setup">
+            <button type="button" onClick=${() => this.scrollTo("program-overview")}>
+              <span aria-hidden="true">1</span><strong>名前とメモ</strong>
+            </button>
+            <button type="button" onClick=${() => this.scrollTo("exercise-setup")}>
+              <span aria-hidden="true">2</span><strong>使う種目</strong>
+            </button>
+            <button type="button" onClick=${() => this.scrollTo("baseline-setup")}>
+              <span aria-hidden="true">3</span><strong>基準値</strong><small>必要な場合</small>
+            </button>
+          </div>
+          <p class="tree-section-label">トレーニング内容</p>
           ${phases.map(
             (phase, phaseIndex) => html`
               <div class="tree-phase">
@@ -1168,7 +1225,7 @@ class ProgramBuilder extends Component {
           )}
         </div>
         ${Button({
-          children: "＋ フェーズを追加",
+          children: "＋ 新しい期間を追加",
           className: "wide-button",
           onClick: () =>
             this.mutate(envelope =>
@@ -1183,6 +1240,45 @@ class ProgramBuilder extends Component {
     `;
   }
 
+  renderStartGuide(program, errors, coreLoading) {
+    const hasName = Boolean(program.name?.trim());
+    const hasExercise = (program.slots || []).some(slot =>
+      Boolean(slot.exerciseName?.trim() || slot.conditionText?.trim()),
+    );
+    const hasMenu = (program.phases || []).some(phase =>
+      (phase.days || []).some(day => (day.groups || []).length > 0),
+    );
+    const checked = !coreLoading && errors.length === 0;
+    const steps = [
+      ["program-overview", "1", "名前をつける", "何のためのプログラムかを書く", hasName],
+      ["exercise-setup", "2", "種目を用意する", "具体的な種目、または選ぶ条件を登録", hasExercise],
+      ["phase-0", "3", "メニューを組む", "日ごとにセット・回数・重量を決める", hasMenu],
+      ["finish-check", "4", "仕上げを確認", "問題がなければアプリへ戻す", checked],
+    ];
+    return html`
+      <section class="start-guide" aria-labelledby="start-guide-title">
+        <div class="start-guide-heading">
+          <div>
+            <span class="eyebrow">はじめに</span>
+            <h1 id="start-guide-title">この順番で作れば大丈夫です</h1>
+            <p>必要なところだけ設定できます。わからない詳細項目は、最初は触らなくてかまいません。</p>
+          </div>
+          <span class="guide-progress">${steps.filter(step => step[4]).length} / 4</span>
+        </div>
+        <ol class="guide-steps">
+          ${steps.map(([id, number, title, description, done]) => html`
+            <li class=${done ? "done" : ""}>
+              <button type="button" onClick=${() => this.scrollTo(id)}>
+                <span class="guide-step-number">${done ? "✓" : number}</span>
+                <span><strong>${title}</strong><small>${description}</small></span>
+              </button>
+            </li>
+          `)}
+        </ol>
+      </section>
+    `;
+  }
+
   renderOverview(program) {
     return html`
       <section
@@ -1193,24 +1289,25 @@ class ProgramBuilder extends Component {
         <div class="section-heading">
           <div>
             <span class="eyebrow">PROGRAM</span>
-            <h1>プログラム設定</h1>
+            <h1>まず、プログラムに名前をつける</h1>
+            <p>あとから見返したときに、目的がわかる名前とメモを残します。</p>
           </div>
         </div>
         <div class="form-grid overview-grid">
           ${TextField({
-            label: "プログラム名",
+            label: "プログラム名（必須）",
             value: program.name,
             className: "span-2",
             focusKey: "program.name",
             onInput: value => this.update(["program", "name"], value),
           })}
           ${TextField({
-            label: "メモ",
+            label: "目的や進め方（任意）",
             value: program.note,
             className: "span-2",
             multiline: true,
             focusKey: "program.note",
-            placeholder: "目的、頻度、注意点など",
+            placeholder: "例：週3回。8週間かけてスクワットを伸ばす。疲労が強い日は重量を下げる。",
             onInput: value => this.update(["program", "note"], value),
           })}
         </div>
@@ -1221,15 +1318,15 @@ class ProgramBuilder extends Component {
   renderVariables(program) {
     const variablesPath = ["program", "variables"];
     return html`
-      <section class="editor-card" data-model-path="program.variables">
+      <section id="baseline-setup" class="editor-card" data-model-path="program.variables">
         <div class="section-heading">
           <div>
-            <span class="eyebrow">VARIABLES</span>
-            <h2>基準重量</h2>
-            <p>進行ルールや割合指定の基準になる重量です。</p>
+            <span class="eyebrow">必要な場合だけ</span>
+            <h2>割合計算の基準を用意する</h2>
+            <p>「基準の75%」のように重量や距離を指定するときに使います。固定値だけなら不要です。</p>
           </div>
           ${Button({
-            children: "＋ 基準重量",
+            children: "＋ 基準値を追加",
             className: "small primary",
             onClick: () =>
               this.mutate(envelope =>
@@ -1241,84 +1338,90 @@ class ProgramBuilder extends Component {
           ${(program.variables || []).map((variable, index) => {
             const path = [...variablesPath, index];
             return html`
-              <div class="resource-row" data-model-path=${pathKey(path)}>
-                <div class="resource-main">
+              <article class="resource-row resource-card" data-model-path=${pathKey(path)}>
+                <div class="resource-card-main">
+                  <div class="resource-basic-grid variable-basic-grid">
                   ${TextField({
-                    label: "ID",
-                    value: variable.id,
-                    className: "id-field",
-                    focusKey: `${pathKey(path)}.id`,
-                    onInput: value => this.rename(path, value, ["varId", "weightVarId"]),
-                  })}
-                  ${TextField({
-                    label: "表示名",
+                    label: "画面に表示する名前",
                     value: variable.label,
+                    placeholder: "例：スクワットのトレーニングMAX",
                     focusKey: `${pathKey(path)}.label`,
                     onInput: value => this.update([...path, "label"], value),
                   })}
                   ${NumberField({
-                    label: "初期値",
+                    label: "最初の値",
                     value: variable.fallbackValue,
                     step: "0.5",
                     min: "0.5",
                     max: "500",
+                    hint: "アプリで個別変更できます",
                     focusKey: `${pathKey(path)}.fallbackValue`,
                     onInput: value => this.update([...path, "fallbackValue"], value),
                   })}
-                ${TextField({
-                  label: "単位",
-                  value: variable.unit,
+                  ${TextField({
+                    label: "単位",
+                    value: variable.unit,
                     className: "short-field",
                     focusKey: `${pathKey(path)}.unit`,
-                  onInput: value => this.update([...path, "unit"], value),
-                })}
-                ${SelectField({
-                  label: "次元",
-                  value: variable.dimension,
-                  focusKey: `${pathKey(path)}.dimension`,
-                  onInput: value => this.update([...path, "dimension"], value),
-                  children: [
-                    ["load", "重量"],
-                    ["distance", "距離"],
-                    ["duration", "時間"],
-                    ["pace", "ペース"],
-                    ["speed", "速度"],
-                    ["count", "回数"],
-                    ["ratio", "比率"],
-                    ["effort", "強度"],
-                    ["scalar", "無次元"],
-                  ].map(([value, label]) =>
-                    html`<option value=${value}>${label}</option>`
-                  ),
-                })}
-                  ${NumberField({
-                    label: "e1RM係数",
-                    value: variable.e1rmFactor,
-                    nullable: true,
-                    step: "0.01",
-                    min: "0",
-                    max: "2",
-                    focusKey: `${pathKey(path)}.e1rmFactor`,
-                    onInput: value => this.update([...path, "e1rmFactor"], value),
+                    onInput: value => this.update([...path, "unit"], value),
                   })}
-                  ${SelectField({
-                    label: "対応する種目枠",
-                    value: variable.slotId || "",
-                    focusKey: `${pathKey(path)}.slotId`,
-                    onInput: value => this.update([...path, "slotId"], value || null),
-                    children: [
-                      html`<option value="">指定なし</option>`,
-                      ...(program.slots || []).map(
-                        slot => html`<option value=${slot.id}>${slot.label || slot.id}</option>`,
-                      ),
-                    ],
+                  </div>
+                  ${AdvancedSettings({
+                    title: "計算方法と内部ID",
+                    description: "通常は変更不要",
+                    children: html`
+                      <div class="advanced-grid">
+                        ${TextField({
+                          label: "内部ID",
+                          value: variable.id,
+                          hint: "他の設定からこの基準値を参照するための名前です",
+                          focusKey: `${pathKey(path)}.id`,
+                          onInput: value => this.rename(path, value, ["varId", "weightVarId"]),
+                        })}
+                        ${SelectField({
+                          label: "値の種類",
+                          value: variable.dimension,
+                          focusKey: `${pathKey(path)}.dimension`,
+                          onInput: value => this.update([...path, "dimension"], value),
+                          children: [
+                            ["load", "重量"], ["distance", "距離"], ["duration", "時間"],
+                            ["pace", "ペース"], ["speed", "速度"], ["count", "回数"],
+                            ["ratio", "比率"], ["effort", "強度"], ["scalar", "数値"],
+                          ].map(([value, label]) => html`<option value=${value}>${label}</option>`),
+                        })}
+                        ${NumberField({
+                          label: "推定1RMへ換算する係数",
+                          value: variable.e1rmFactor,
+                          nullable: true,
+                          step: "0.01",
+                          min: "0",
+                          max: "2",
+                          hint: "空欄なら換算しません",
+                          focusKey: `${pathKey(path)}.e1rmFactor`,
+                          onInput: value => this.update([...path, "e1rmFactor"], value),
+                        })}
+                        ${SelectField({
+                          label: "対応する種目",
+                          value: variable.slotId || "",
+                          focusKey: `${pathKey(path)}.slotId`,
+                          onInput: value => this.update([...path, "slotId"], value || null),
+                          children: [
+                            html`<option value="">指定なし</option>`,
+                            ...(program.slots || []).map(slot =>
+                              html`<option value=${slot.id}>${slot.label || slot.id}</option>`),
+                          ],
+                        })}
+                      </div>
+                    `,
                   })}
                 </div>
-                ${this.structureActions(variablesPath, index, "基準重量")}
-              </div>
+                ${this.structureActions(variablesPath, index, "基準値")}
+              </article>
             `;
           })}
-          ${(program.variables || []).length ? null : EmptyHint({ children: "基準重量がありません。" })}
+          ${(program.variables || []).length
+            ? null
+            : Explanation({ title: "固定の重量だけを使うなら、このままでOKです", children: "割合指定や自動加重を使いたくなったときに追加してください。", tone: "tip" })}
         </div>
       </section>
     `;
@@ -1327,15 +1430,15 @@ class ProgramBuilder extends Component {
   renderSlots(program) {
     const slotsPath = ["program", "slots"];
     return html`
-      <section class="editor-card" data-model-path="program.slots">
+      <section id="exercise-setup" class="editor-card" data-model-path="program.slots">
         <div class="section-heading">
           <div>
-            <span class="eyebrow">SLOTS</span>
-            <h2>種目枠</h2>
-            <p>具体的な種目、またはアプリ採用時に選ぶ条件枠です。</p>
+            <span class="eyebrow">種目の準備</span>
+            <h2>このプログラムで使う種目</h2>
+            <p>種目を決めておくか、「脚の種目」のような条件だけを指定してアプリ側で選べます。</p>
           </div>
           ${Button({
-            children: "＋ 種目枠",
+            children: "＋ 種目を追加",
             className: "small primary",
             onClick: () =>
               this.mutate(envelope => ui.insertItem(envelope, slotsPath, ui.createSlot(envelope))),
@@ -1347,28 +1450,22 @@ class ProgramBuilder extends Component {
             const activityKind =
               slot.activityRequirement?.fact?._0?.kind?._0 || "";
             return html`
-              <div class="resource-row" data-model-path=${pathKey(path)}>
-                <div class="resource-main slots-grid">
+              <article class="resource-row resource-card" data-model-path=${pathKey(path)}>
+                <div class="resource-card-main">
+                  <div class="resource-basic-grid slot-basic-grid">
                   ${TextField({
-                    label: "ID",
-                    value: slot.id,
-                    className: "id-field",
-                    focusKey: `${pathKey(path)}.id`,
-                    onInput: value =>
-                      this.rename(path, value, ["slotId", "slotIds"]),
-                  })}
-                  ${TextField({
-                    label: "表示名",
+                    label: "メニュー上の名前",
                     value: slot.label,
+                    placeholder: "例：メインの脚種目",
                     focusKey: `${pathKey(path)}.label`,
                     onInput: value => this.update([...path, "label"], value),
                   })}
                   <div class="field-with-hint">
                     ${TextField({
-                      label: "種目名",
+                      label: "行う種目",
                       value: slot.exerciseName,
                       nullable: true,
-                      placeholder: "未指定なら採用時に選択",
+                      placeholder: "未指定ならアプリで選ぶ",
                       list: this.state.catalog
                         ? exerciseListId(activityKind)
                         : "",
@@ -1377,39 +1474,8 @@ class ProgramBuilder extends Component {
                     })}
                     ${this.exerciseNameHint(slot, activityKind)}
                   </div>
-                  ${TextField({
-                    label: "種目UUID",
-                    value: slot.exerciseUuid,
-                    nullable: true,
-                    placeholder: "任意",
-                    focusKey: `${pathKey(path)}.exerciseUuid`,
-                    onInput: value => this.update([...path, "exerciseUuid"], value),
-                  })}
-                  <div class="field-with-hint">
-                    ${TextField({
-                      label: "筋肉キー（カンマ区切り）",
-                      value: (slot.muscleKeys || []).join(", "),
-                      focusKey: `${pathKey(path)}.muscleKeys`,
-                      onInput: value =>
-                        this.update(
-                          [...path, "muscleKeys"],
-                          value
-                            .split(",")
-                            .map(item => item.trim())
-                            .filter(Boolean),
-                        ),
-                    })}
-                    ${this.renderMuscleChips(path, slot)}
-                  </div>
-                  ${TextField({
-                    label: "選択条件",
-                    value: slot.conditionText,
-                    placeholder: "例: 脚のコンパウンド種目",
-                    focusKey: `${pathKey(path)}.conditionText`,
-                    onInput: value => this.update([...path, "conditionText"], value),
-                  })}
                   ${SelectField({
-                    label: "種目タイプ",
+                    label: "運動の種類",
                     value: activityKind,
                     focusKey: `${pathKey(path)}.activityRequirement`,
                     onInput: value =>
@@ -1426,21 +1492,64 @@ class ProgramBuilder extends Component {
                       html`<option value="cycling">サイクリング</option>`,
                     ],
                   })}
-                  ${TextField({
-                    label: "重複禁止グループ",
-                    value: slot.distinctGroup,
-                    nullable: true,
-                    placeholder: "例: vertical_pull",
-                    focusKey: `${pathKey(path)}.distinctGroup`,
-                    onInput: value =>
-                      this.update([...path, "distinctGroup"], value),
+                    ${TextField({
+                      label: "アプリで選ぶときの条件",
+                      value: slot.conditionText,
+                      placeholder: "例：脚のコンパウンド種目（種目を決めた場合は空欄でOK）",
+                      focusKey: `${pathKey(path)}.conditionText`,
+                      onInput: value => this.update([...path, "conditionText"], value),
+                    })}
+                  </div>
+                  ${AdvancedSettings({
+                    title: "絞り込みと内部情報",
+                    description: "筋肉・重複制御・ID",
+                    children: html`
+                      <div class="advanced-grid">
+                        ${TextField({
+                          label: "内部ID",
+                          value: slot.id,
+                          hint: "メニューからこの種目を参照するための名前です",
+                          focusKey: `${pathKey(path)}.id`,
+                          onInput: value => this.rename(path, value, ["slotId", "slotIds"]),
+                        })}
+                        ${TextField({
+                          label: "種目UUID",
+                          value: slot.exerciseUuid,
+                          nullable: true,
+                          placeholder: "種目リストから選ぶと自動入力",
+                          focusKey: `${pathKey(path)}.exerciseUuid`,
+                          onInput: value => this.update([...path, "exerciseUuid"], value),
+                        })}
+                        <div class="field-with-hint span-2">
+                          ${TextField({
+                            label: "対象の筋肉（カンマ区切り）",
+                            value: (slot.muscleKeys || []).join(", "),
+                            focusKey: `${pathKey(path)}.muscleKeys`,
+                            onInput: value => this.update(
+                              [...path, "muscleKeys"],
+                              value.split(",").map(item => item.trim()).filter(Boolean),
+                            ),
+                          })}
+                          ${this.renderMuscleChips(path, slot)}
+                        </div>
+                        ${TextField({
+                          label: "同じ種目にしたくないグループ",
+                          value: slot.distinctGroup,
+                          nullable: true,
+                          placeholder: "同じ名前を設定した枠どうしで重複を防ぎます",
+                          hint: "例：pull。空欄なら重複を許可します",
+                          focusKey: `${pathKey(path)}.distinctGroup`,
+                          onInput: value => this.update([...path, "distinctGroup"], value),
+                        })}
+                      </div>
+                    `,
                   })}
                 </div>
-                ${this.structureActions(slotsPath, index, "種目枠")}
-              </div>
+                ${this.structureActions(slotsPath, index, "種目")}
+              </article>
             `;
           })}
-          ${(program.slots || []).length ? null : EmptyHint({ children: "種目枠がありません。" })}
+          ${(program.slots || []).length ? null : EmptyHint({ children: "まだ種目がありません。上のボタンから追加してください。" })}
         </div>
       </section>
     `;
@@ -1506,7 +1615,7 @@ class ProgramBuilder extends Component {
 
     fields.push(
       SelectField({
-        label: "形式",
+        label: "指定方法",
         value: currentCase || Object.keys(labels)[0],
         focusKey: `${pathKey(path)}.case`,
         onInput: changeCase,
@@ -1602,8 +1711,9 @@ class ProgramBuilder extends Component {
     ) {
       fields.push(
         TextField({
-          label: "stageKey",
+          label: "ステージの識別名",
           value: payload.stageKey,
+          hint: "同じ名前のステージ表が連動します",
           focusKey: `${pathKey(path)}.${currentCase}.stageKey`,
           onInput: next => this.update([...path, currentCase, "stageKey"], next),
         }),
@@ -1621,9 +1731,12 @@ class ProgramBuilder extends Component {
     return html`
       <div class="entries-panel">
         <div class="subheading">
-          <strong>種目行</strong>
+          <div>
+            <strong>このブロックで行う種目</strong>
+            <small>2種目以上にするとスーパーセットになります。</small>
+          </div>
           ${Button({
-            children: "＋ 種目行",
+            children: "＋ 種目を並べる",
             className: "small",
             onClick: () => this.mutate(envelope => ui.addEntry(envelope, groupPath)),
           })}
@@ -1631,50 +1744,44 @@ class ProgramBuilder extends Component {
         ${(group.entries || []).map((entry, entryIndex) => {
           const path = [...groupPath, "entries", entryIndex];
           return html`
-            <div class="entry-row" data-model-path=${pathKey(path)}>
-              <span class="drag-index">${entryIndex + 1}</span>
-              ${this.renderEntryVariants(program, entry, path)}
-              ${TextField({
-                label: "methodologyId",
-                value: entry.methodologyId,
-                nullable: true,
-                className: "method-field",
-                placeholder: "任意",
-                focusKey: `${pathKey(path)}.methodologyId`,
-                onInput: value => this.update([...path, "methodologyId"], value),
-              })}
-              <div class="row-actions">
-                ${IconButton({
-                  icon: "↑",
-                  label: "種目行を上へ",
-                  disabled: entryIndex === 0,
-                  onClick: () =>
-                    this.mutate(envelope => ui.moveEntry(envelope, groupPath, entryIndex, -1)),
-                })}
-                ${IconButton({
-                  icon: "↓",
-                  label: "種目行を下へ",
-                  disabled: entryIndex === group.entries.length - 1,
-                  onClick: () =>
-                    this.mutate(envelope => ui.moveEntry(envelope, groupPath, entryIndex, 1)),
-                })}
-                ${IconButton({
-                  icon: "⧉",
-                  label: "種目行を複製",
-                  onClick: () =>
-                    this.mutate(envelope => ui.duplicateEntry(envelope, groupPath, entryIndex)),
-                })}
-                ${IconButton({
-                  icon: "×",
-                  label: "種目行を削除",
-                  danger: true,
-                  onClick: () =>
-                    this.confirmDelete("種目行", () =>
-                      this.mutate(envelope => ui.removeEntry(envelope, groupPath, entryIndex)),
-                    ),
-                })}
+            <article class="entry-card" data-model-path=${pathKey(path)}>
+              <div class="entry-card-heading">
+                <strong><span>${entryIndex + 1}</span> 種目 ${entryIndex + 1}</strong>
+                <div class="row-actions">
+                  ${IconButton({
+                    icon: "↑", label: "種目を上へ", disabled: entryIndex === 0,
+                    onClick: () => this.mutate(envelope => ui.moveEntry(envelope, groupPath, entryIndex, -1)),
+                  })}
+                  ${IconButton({
+                    icon: "↓", label: "種目を下へ", disabled: entryIndex === group.entries.length - 1,
+                    onClick: () => this.mutate(envelope => ui.moveEntry(envelope, groupPath, entryIndex, 1)),
+                  })}
+                  ${IconButton({
+                    icon: "⧉", label: "種目を複製",
+                    onClick: () => this.mutate(envelope => ui.duplicateEntry(envelope, groupPath, entryIndex)),
+                  })}
+                  ${IconButton({
+                    icon: "×", label: "種目を削除", danger: true,
+                    onClick: () => this.confirmDelete("種目", () =>
+                      this.mutate(envelope => ui.removeEntry(envelope, groupPath, entryIndex))),
+                  })}
+                </div>
               </div>
-            </div>
+              ${this.renderEntryVariants(program, entry, path)}
+              ${AdvancedSettings({
+                title: "トレーニング体系の識別名",
+                description: "外部の方法論と連携するときだけ",
+                children: TextField({
+                  label: "共通のmethodology ID",
+                  value: entry.methodologyId,
+                  nullable: true,
+                  placeholder: "通常は空欄",
+                  hint: "この種目行のすべてのローテーションに適用します",
+                  focusKey: `${pathKey(path)}.methodologyId`,
+                  onInput: value => this.update([...path, "methodologyId"], value),
+                }),
+              })}
+            </article>
           `;
         })}
       </div>
@@ -1685,85 +1792,83 @@ class ProgramBuilder extends Component {
     const variants = entryVariants(entry);
     const variantsPath = [...entryPath, "variants"];
     return html`
-      <div class="field grow">
-        <span>処方ローテーション</span>
-        <div class="compact-list">
+      <div class="entry-variants">
+        ${variants.length > 1
+          ? html`<p class="rotation-explanation">この場所では、採用するたびに下の種目を順番に切り替えます。</p>`
+          : null}
+        <div class="compact-list variant-list">
           ${variants.map((variant, index) => {
             const path = [...variantsPath, index];
             const methodologyMode = overrideCase(variant.methodologyId);
             const progressionMode = overrideCase(variant.progressionRules);
             return html`
-              <div class="resource-row" data-model-path=${pathKey(path)}>
-                <span class="drag-index">${index + 1}</span>
-                ${SelectField({
-                  label: "種目枠",
-                  value: variant.slotId,
-                  focusKey: `${pathKey(path)}.slotId`,
-                  onInput: value => this.update([...path, "slotId"], value),
-                  children: (program.slots || []).map(
-                    slot =>
-                      html`<option value=${slot.id}>${slot.label || slot.id}</option>`,
-                  ),
-                })}
-                ${TextField({
-                  label: "表示名",
-                  value: variant.label,
-                  nullable: true,
-                  placeholder: "任意",
-                  focusKey: `${pathKey(path)}.label`,
-                  onInput: value => this.update([...path, "label"], value || null),
-                })}
-                ${SelectField({
-                  label: "体系",
-                  value: methodologyMode,
-                  focusKey: `${pathKey(path)}.methodologyId`,
-                  onInput: value =>
-                    this.update(
-                      [...path, "methodologyId"],
-                      value === "none"
-                        ? { none: {} }
-                        : value === "value"
-                          ? { value: { _0: "" } }
-                          : { inherit: {} },
-                    ),
-                  children: [
-                    html`<option value="inherit">共通を継承</option>`,
-                    html`<option value="value">個別指定</option>`,
-                    html`<option value="none">なし</option>`,
-                  ],
-                })}
-                ${methodologyMode === "value"
-                  ? TextField({
-                      label: "methodologyId",
-                      value: variant.methodologyId.value?._0 || "",
-                      focusKey: `${pathKey(path)}.methodologyId.value`,
-                      onInput: value =>
-                        this.update(
+              <div class="variant-card" data-model-path=${pathKey(path)}>
+                ${variants.length > 1 ? html`<span class="variant-number">${index + 1}</span>` : null}
+                <div class="variant-basic-grid">
+                  ${SelectField({
+                    label: "どの種目を行う？",
+                    value: variant.slotId,
+                    focusKey: `${pathKey(path)}.slotId`,
+                    onInput: value => this.update([...path, "slotId"], value),
+                    children: (program.slots || []).map(slot =>
+                      html`<option value=${slot.id}>${slot.label || slot.id}</option>`),
+                  })}
+                  ${TextField({
+                    label: "この場所だけの表示名（任意）",
+                    value: variant.label,
+                    nullable: true,
+                    placeholder: "例：テンポスクワット",
+                    focusKey: `${pathKey(path)}.label`,
+                    onInput: value => this.update([...path, "label"], value || null),
+                  })}
+                </div>
+                ${AdvancedSettings({
+                  title: "このローテーションだけの進行設定",
+                  description: "通常は共通設定を使います",
+                  children: html`
+                    <div class="advanced-grid">
+                      ${SelectField({
+                        label: "トレーニング体系",
+                        value: methodologyMode,
+                        focusKey: `${pathKey(path)}.methodologyId`,
+                        onInput: value => this.update(
                           [...path, "methodologyId"],
-                          { value: { _0: value } },
+                          value === "none" ? { none: {} }
+                            : value === "value" ? { value: { _0: "" } }
+                            : { inherit: {} },
                         ),
-                    })
-                  : null}
-                ${SelectField({
-                  label: "進行",
-                  value: progressionMode,
-                  focusKey: `${pathKey(path)}.progressionRules`,
-                  onInput: value =>
-                    this.update(
-                      [...path, "progressionRules"],
-                      value === "none" ? { none: {} } : { inherit: {} },
-                    ),
-                  children: [
-                    html`<option value="inherit">共通ルールを継承</option>`,
-                    html`<option value="none">自動進行なし</option>`,
-                    ...(progressionMode === "value"
-                      ? [html`<option value="value">個別ルール</option>`]
-                      : []),
-                  ],
+                        children: [
+                          html`<option value="inherit">種目行の共通設定を使う</option>`,
+                          html`<option value="value">この種目だけ指定</option>`,
+                          html`<option value="none">体系なし</option>`,
+                        ],
+                      })}
+                      ${methodologyMode === "value" ? TextField({
+                        label: "methodology ID",
+                        value: variant.methodologyId.value?._0 || "",
+                        focusKey: `${pathKey(path)}.methodologyId.value`,
+                        onInput: value => this.update([...path, "methodologyId"], { value: { _0: value } }),
+                      }) : null}
+                      ${SelectField({
+                        label: "フェーズ終了時の進行",
+                        value: progressionMode,
+                        focusKey: `${pathKey(path)}.progressionRules`,
+                        onInput: value => this.update(
+                          [...path, "progressionRules"],
+                          value === "none" ? { none: {} } : { inherit: {} },
+                        ),
+                        children: [
+                          html`<option value="inherit">共通ルールを使う</option>`,
+                          html`<option value="none">この種目は自動進行しない</option>`,
+                          ...(progressionMode === "value" ? [html`<option value="value">個別ルール</option>`] : []),
+                        ],
+                      })}
+                    </div>
+                  `,
                 })}
                 ${IconButton({
                   icon: "×",
-                  label: "variantを削除",
+                  label: "ローテーションから削除",
                   danger: true,
                   disabled: variants.length <= 1,
                   onClick: () =>
@@ -1777,8 +1882,8 @@ class ProgramBuilder extends Component {
           })}
         </div>
         ${Button({
-          children: "＋ 処方variant",
-          className: "small",
+          children: variants.length > 1 ? "＋ ローテーションに種目を追加" : "＋ この場所で種目を交互に使う",
+          className: "small rotation-add",
           onClick: () => {
             const nextIndex = variants.length + 1;
             this.update(variantsPath, [
@@ -1865,13 +1970,13 @@ class ProgramBuilder extends Component {
             <span class="entry-name">${slotNames.join(" / ") || target.entryId}${sideText(
               target.side,
             )}</span>
-            <code>${target.entryId}</code>
+            <code class="technical-id">内部ID: ${target.entryId}</code>
           </div>
           <div class="prescription" dangerouslySetInnerHTML=${{ __html: previewHTML(preview) }}></div>
         </div>
-        <div class="target-meta-line">
+        <div class="prescription-kind-line">
           ${SelectField({
-            label: "型付き処方",
+            label: "メニューの種類",
             value: activityKind,
             focusKey: `${pathKey(path)}.activityPrescription`,
             onInput: value =>
@@ -1880,10 +1985,10 @@ class ProgramBuilder extends Component {
                 defaultActivityPrescription(value),
               ),
             children: [
-              html`<option value="">Strengthの回数・重量を使う</option>`,
+              html`<option value="">筋トレ（セット・回数・重量）</option>`,
               html`<option value="running">ランニング</option>`,
               html`<option value="cycling">サイクリング</option>`,
-              html`<option value="strength">Strength payload</option>`,
+              html`<option value="strength">筋トレ（範囲や相対重量を細かく指定）</option>`,
             ],
           })}
           ${activityKind === "running" || activityKind === "cycling"
@@ -2088,11 +2193,11 @@ class ProgramBuilder extends Component {
         </div>
         <div class="enum-line">
           <div class="enum-group">
-            <span class="mini-label">回数</span>
+            <span class="mini-label">1セットあたりの回数</span>
             ${this.renderEnumFields("reps", target.reps, [...path, "reps"], program)}
           </div>
           <div class="enum-group">
-            <span class="mini-label">重量</span>
+            <span class="mini-label">使用重量</span>
             ${this.renderEnumFields("load", target.load, [...path, "load"], program)}
           </div>
         </div>
@@ -2106,7 +2211,7 @@ class ProgramBuilder extends Component {
             children: optionsFrom(SIDE_LABELS),
           })}
           ${TextField({
-            label: "指示メモ",
+            label: "この種目への指示（任意）",
             value: target.note,
             nullable: true,
             className: "note-field",
@@ -2115,48 +2220,57 @@ class ProgramBuilder extends Component {
             onInput: value => this.update([...path, "note"], value),
           })}
         </div>
-        <div class="measure-line">
-          ${Toggle({
-            label: "この行を実測する",
-            checked: Boolean(target.measureId),
-            className: target.measureId ? "measured" : "",
-            onInput: enabled => this.toggleMeasure(path, enabled, measureFallback),
-          })}
-          ${target.measureId
-            ? [
+        ${AdvancedSettings({
+          title: "記録・進行・種目ローテーションの詳細",
+          description: target.measureId || (target.extras || []).length ? "設定あり" : "必要な場合だけ",
+          open: Boolean(target.measureId || (target.extras || []).length),
+          className: "target-advanced",
+          children: html`
+            ${Explanation({
+              title: "自動進行に使う結果を記録する",
+              children: "進行ルールで達成回数などを参照したい種目だけ、実測を有効にします。",
+            })}
+            <div class="measure-line">
+              ${Toggle({
+                label: "この種目の結果を記録し、進行判定に使う",
+                checked: Boolean(target.measureId),
+                className: target.measureId ? "measured" : "",
+                onInput: enabled => this.toggleMeasure(path, enabled, measureFallback),
+              })}
+              ${target.measureId ? [
                 TextField({
-                  label: "measureId",
+                  label: "記録の内部ID",
                   value: target.measureId,
                   className: "measure-field",
+                  hint: "進行ルールからこの結果を参照するための名前です",
                   focusKey: `${pathKey(path)}.measureId`,
                   onInput: value => this.update([...path, "measureId"], value),
                 }),
                 TextField({
-                  label: "実測フィールド",
+                  label: "記録する値の種類",
                   value: target.measureFieldKey,
                   nullable: true,
                   className: "measure-field",
-                  placeholder: "既定値",
+                  placeholder: "空欄なら既定の回数",
                   focusKey: `${pathKey(path)}.measureFieldKey`,
                   onInput: value => this.update([...path, "measureFieldKey"], value),
                 }),
-              ]
-            : null}
-        </div>
-        <div class="extras">
-          ${(target.extras || []).map((extra, extraIndex) =>
-            this.renderExtra(extra, extraIndex, extrasPath),
-          )}
-          ${Button({
-            children: "＋ 追加指標",
-            className: "text-button",
-            onClick: () => this.mutate(envelope => ui.addExtra(envelope, path)),
-          })}
-          ${(target.extras || []).length
-            ? html`<span class="extra-preview">${target.extras.map(extraText).join(" / ")}</span>`
-            : null}
-        </div>
-        ${this.renderVariantTargetOverrides(group, entry, target, setGroup, setGroupPath)}
+              ] : null}
+            </div>
+            <div class="extras">
+              ${(target.extras || []).map((extra, extraIndex) => this.renderExtra(extra, extraIndex, extrasPath))}
+              ${Button({
+                children: "＋ RPE・RIR・距離などの指標を追加",
+                className: "text-button",
+                onClick: () => this.mutate(envelope => ui.addExtra(envelope, path)),
+              })}
+              ${(target.extras || []).length
+                ? html`<span class="extra-preview">${target.extras.map(extraText).join(" / ")}</span>`
+                : null}
+            </div>
+            ${this.renderVariantTargetOverrides(group, entry, target, setGroup, setGroupPath)}
+          `,
+        })}
       </div>
     `;
   }
@@ -2169,7 +2283,7 @@ class ProgramBuilder extends Component {
 
     return html`
       <div class="variant-targets">
-        <span class="mini-label">variant別処方</span>
+        <span class="mini-label">ローテーションごとの個別メニュー</span>
         ${variants.map((variant, variantIndex) => {
           const variantPath = [
             ...groupPath,
@@ -2284,7 +2398,7 @@ class ProgramBuilder extends Component {
               </div>
               <div class="target-meta-line">
                 ${SelectField({
-                  label: "実測・進行",
+                  label: "記録と自動進行",
                   value: measureMode,
                   focusKey: `${pathKey(overridePath)}.measureId`,
                   onInput: value =>
@@ -2306,7 +2420,7 @@ class ProgramBuilder extends Component {
                 })}
                 ${measureMode === "value"
                   ? TextField({
-                      label: "measureId",
+                      label: "記録の内部ID",
                       value: targetOverride.measureId.value?._0 || "",
                       focusKey: `${pathKey(overridePath)}.measureId.value`,
                       onInput: value =>
@@ -2334,7 +2448,7 @@ class ProgramBuilder extends Component {
               </div>
               <div class="target-meta-line">
                 ${SelectField({
-                  label: "型付き処方",
+                  label: "メニューの種類",
                   value: activityMode === "value" ? activityKind : activityMode,
                   focusKey: `${pathKey(overridePath)}.activityPrescription`,
                   onInput: value =>
@@ -2351,7 +2465,7 @@ class ProgramBuilder extends Component {
                     html`<option value="none">なし</option>`,
                     html`<option value="running">ランニング</option>`,
                     html`<option value="cycling">サイクリング</option>`,
-                    html`<option value="strength">Strength payload</option>`,
+                    html`<option value="strength">筋トレ（範囲や相対重量を細かく指定）</option>`,
                   ],
                 })}
                 ${activityKind === "running" || activityKind === "cycling"
@@ -2427,11 +2541,12 @@ class ProgramBuilder extends Component {
       <section class="set-group" data-model-path=${pathKey(path)}>
         <div class="set-group-heading">
           <div>
-            <span class="set-number">SET ${setGroupIndex + 1}</span>
-            <code>${setGroup.id}</code>
+            <span class="set-number">パターン ${setGroupIndex + 1}</span>
+            <small>${setGroupIndex === 0 ? "基本メニュー" : "別の回数・重量"}</small>
+            <code class="technical-id">${setGroup.id}</code>
           </div>
           <div class="count-editor">
-            <span class="mini-label">セット数</span>
+            <span class="mini-label">何セット行う？</span>
             ${this.renderEnumFields("count", setGroup.count, [...path, "count"], program)}
           </div>
           ${this.structureActions(setGroupsPath, setGroupIndex, "セット群", {
@@ -2461,7 +2576,7 @@ class ProgramBuilder extends Component {
       : "";
     return html`
       <label class="field span-2 execution-json-field">
-        <span>実行順（perform / rest / sequence / repeat JSON）</span>
+        <span>実行順・休憩・反復（上級者向けJSON）</span>
         <textarea
           value=${value}
           placeholder="空欄ならブロック順。JSONを設定すると実行順・休憩・反復を明示できます。"
@@ -2488,9 +2603,9 @@ class ProgramBuilder extends Component {
     if (!sessions.length) {
       return html`
         <div class="sessions-empty">
-          <span>現在は1日＝1セッションです。</span>
+          <span>現在は、この日の全ブロックを1回のトレーニングとして記録します。</span>
           ${Button({
-            children: "＋ セッション分割を有効化",
+            children: "朝・夜などに分ける",
             className: "small",
             onClick: () =>
               this.mutate(envelope => ui.enableSessions(envelope, dayPath)),
@@ -2503,11 +2618,11 @@ class ProgramBuilder extends Component {
       <section class="sessions-panel" data-model-path=${pathKey([...dayPath, "sessions"])}>
         <div class="subheading">
           <div>
-            <strong>セッション</strong>
-            <small>同じ日の中で別々の記録として生成されます。</small>
+            <strong>1日の中のトレーニング分け</strong>
+            <small>朝・夜など、別々の記録として生成されます。</small>
           </div>
           ${Button({
-            children: "＋ セッション",
+            children: "＋ 時間帯を追加",
             className: "small primary",
             onClick: () =>
               this.mutate(envelope => ui.addSession(envelope, dayPath)),
@@ -2520,7 +2635,7 @@ class ProgramBuilder extends Component {
               <div class="resource-row session-row" data-model-path=${pathKey(sessionPath)}>
                 <div class="form-grid session-fields">
                   ${TextField({
-                    label: "ID",
+                    label: "内部ID",
                     value: session.id,
                     className: "id-field",
                     focusKey: `${pathKey(sessionPath)}.id`,
@@ -2528,13 +2643,13 @@ class ProgramBuilder extends Component {
                       this.rename(sessionPath, value, ["sessionID"]),
                   })}
                   ${TextField({
-                    label: "セッション名",
+                    label: "表示名",
                     value: session.label,
                     focusKey: `${pathKey(sessionPath)}.label`,
                     onInput: value => this.update([...sessionPath, "label"], value),
                   })}
                   ${TextField({
-                    label: "ピル",
+                    label: "短いラベル",
                     value: session.pill,
                     className: "short-field",
                     focusKey: `${pathKey(sessionPath)}.pill`,
@@ -2571,9 +2686,12 @@ class ProgramBuilder extends Component {
       <article class="block-card" data-model-path=${pathKey(path)}>
         <div class="block-heading">
           <div>
-            <span class="eyebrow">BLOCK ${groupIndex + 1}</span>
-            <h4>${(group.entries || []).length > 1 ? "スーパーセット" : "通常ブロック"}</h4>
-            <code>${group.id}</code>
+            <span class="eyebrow">ブロック ${groupIndex + 1}</span>
+            <h4>${(group.entries || []).length > 1 ? "スーパーセット" : "1種目ずつ行う"}</h4>
+            <p>${(group.entries || []).length > 1
+              ? "並んだ種目を続けて行い、すべて終えたら次のセットへ進みます。"
+              : "この種目のセットを終えてから次のブロックへ進みます。"}</p>
+            <code class="technical-id">内部ID: ${group.id}</code>
           </div>
           ${this.structureActions(groupsPath, groupIndex, "ブロック", {
             clearMeasures: true,
@@ -2581,7 +2699,7 @@ class ProgramBuilder extends Component {
       </div>
       ${sessions.length
         ? SelectField({
-            label: "所属セッション",
+            label: "いつ行う？",
             value: group.sessionID || sessions[0].id,
             className: "session-picker",
             focusKey: `${pathKey(path)}.sessionID`,
@@ -2604,7 +2722,7 @@ class ProgramBuilder extends Component {
           ),
         )}
         ${Button({
-          children: "＋ セット群を追加",
+          children: "＋ 別のセット数・回数・重量パターンを追加",
           className: "wide-button dashed",
           onClick: () => this.mutate(envelope => ui.addSetGroup(envelope, path)),
         })}
@@ -2624,25 +2742,32 @@ class ProgramBuilder extends Component {
         data-model-path=${pathKey(path)}
       >
         <div class="day-heading">
-          <span class="day-number">DAY ${dayIndex + 1}</span>
+          <span class="day-number">${dayIndex + 1}日目</span>
           <div class="day-fields">
             ${TextField({
-              label: "日名",
+              label: "この日の名前",
               value: day.label,
               focusKey: `${pathKey(path)}.label`,
               onInput: value => this.update([...path, "label"], value),
             })}
             ${TextField({
-              label: "ピル",
+              label: "短いラベル",
               value: day.pill,
               className: "short-field",
+              hint: "例：重い日・30分",
               focusKey: `${pathKey(path)}.pill`,
               onInput: value => this.update([...path, "pill"], value),
             })}
           </div>
           ${this.structureActions(daysPath, dayIndex, "日")}
         </div>
-      ${this.renderSessions(day, path)}
+      ${AdvancedSettings({
+        title: "この日を朝・夜など複数回に分ける",
+        description: (day.sessions || []).length ? `${day.sessions.length}回に分割中` : "必要な場合だけ",
+        open: Boolean((day.sessions || []).length),
+        className: "day-sessions-settings",
+        children: this.renderSessions(day, path),
+      })}
       ${(day.groups || []).map((group, groupIndex) =>
         this.renderGroup(
           program,
@@ -2654,7 +2779,7 @@ class ProgramBuilder extends Component {
         ),
       )}
       ${Button({
-        children: "＋ ブロックを追加",
+        children: "＋ 次の種目・スーパーセットを追加",
         className: "wide-button dashed",
         onClick: () =>
           this.mutate(envelope =>
@@ -2678,8 +2803,9 @@ class ProgramBuilder extends Component {
     const measures = ui.collectMeasureIds(this.state.envelope);
     const fields = [
       TextField({
-        label: "ルールID",
+        label: "ルールの内部ID",
         value: payload.id,
+        hint: "他の設定と区別するための名前です。通常は変更不要です",
         focusKey: `${pathKey(payloadPath)}.id`,
         onInput: value => this.update([...payloadPath, "id"], value),
       }),
@@ -2696,13 +2822,13 @@ class ProgramBuilder extends Component {
       });
     const measureField = () =>
       SelectField({
-        label: "参照する実測",
+        label: "どの種目の結果で判定する？",
         value: payload.measureId,
         focusKey: `${pathKey(payloadPath)}.measureId`,
         onInput: value => this.update([...payloadPath, "measureId"], value),
         children: measures.length
           ? measures.map(measure => html`<option value=${measure}>${measure}</option>`)
-          : html`<option value="">先に実測マークを追加</option>`,
+          : html`<option value="">先に種目の「結果を記録」を有効にしてください</option>`,
       });
 
     if (["progressIfReached", "always", "progressByTable", "adjustByBand"].includes(ruleCase)) {
@@ -2804,8 +2930,9 @@ class ProgramBuilder extends Component {
     } else if (ruleCase === "stageDemotion") {
       fields.push(
         TextField({
-          label: "stageKey",
+          label: "ステージの識別名",
           value: payload.stageKey,
+          hint: "セット・回数表と同じ名前にすると連動します",
           focusKey: `${pathKey(payloadPath)}.stageKey`,
           onInput: value => this.update([...payloadPath, "stageKey"], value),
         }),
@@ -2838,21 +2965,23 @@ class ProgramBuilder extends Component {
       <section class="rules-panel" data-model-path=${pathKey(rulesPath)}>
         <div class="subheading rules-heading">
           <div>
-            <strong>進行ルール</strong>
-            <span>フェーズ終了時に評価</span>
+            <strong>1周終わったあとの自動調整</strong>
+            <span>記録した結果を使って、次回の基準値やステージを変えます。不要なら設定しなくてOKです。</span>
           </div>
-          <div class="rule-add-menu">
-            ${Object.entries(RULE_LABELS).map(([ruleCase, label]) =>
-              Button({
-                children: `＋ ${label}`,
-                className: "small",
-                onClick: () =>
+          <details class="rule-add-menu">
+            <summary>＋ 自動調整を追加</summary>
+            <div class="rule-choice-popover">
+              <strong>どう調整したいですか？</strong>
+              ${Object.entries(RULE_LABELS).map(([ruleCase, label]) => html`
+                <button type="button" onClick=${() =>
                   this.mutate(envelope =>
-                    ui.insertItem(envelope, rulesPath, ui.ruleDefault(ruleCase, envelope)),
-                  ),
-              }),
-            )}
-          </div>
+                    ui.insertItem(envelope, rulesPath, ui.ruleDefault(ruleCase, envelope)))}>
+                  <span>${label}</span>
+                  <small>${RULE_DESCRIPTIONS[ruleCase]}</small>
+                </button>
+              `)}
+            </div>
+          </details>
         </div>
         ${(phase.endRules || []).map((rule, ruleIndex) => {
           const path = [...rulesPath, ruleIndex];
@@ -2867,7 +2996,7 @@ class ProgramBuilder extends Component {
             <div class="rule-card" data-model-path=${pathKey(path)}>
               <div class="rule-card-heading">
                 ${SelectField({
-                  label: "ルール形式",
+                  label: "調整方法",
                   value: ruleCase,
                   focusKey: `${pathKey(path)}.case`,
                   onInput: value =>
@@ -2885,7 +3014,7 @@ class ProgramBuilder extends Component {
                 ${ruleCase === "always"
                   ? null
                   : SelectField({
-                      label: "実測がないとき",
+                      label: "結果を記録しなかったとき",
                       value: missingMetricBehavior,
                       focusKey: `${pathKey(phasePath)}.progressionPolicies.${ruleId}`,
                       onInput: value =>
@@ -2898,9 +3027,9 @@ class ProgramBuilder extends Component {
                           )
                         ),
                       children: [
-                        ["maintain", "維持して進む"],
-                        ["failure", "失敗扱い"],
-                        ["pending", "確認待ち"],
+                        ["maintain", "値を変えずに次へ進む"],
+                        ["failure", "未達成として調整する"],
+                        ["pending", "判断せず確認待ちにする"],
                       ].map(
                         ([value, label]) =>
                           html`<option value=${value}>${label}</option>`
@@ -2912,7 +3041,11 @@ class ProgramBuilder extends Component {
         })}
         ${(phase.endRules || []).length
           ? null
-          : EmptyHint({ children: "進行ルールなし（このフェーズでは重量を変更しません）。" })}
+          : Explanation({
+              title: "自動調整なし",
+              children: "この期間を終えても基準値は変わりません。まず固定メニューを作るなら、このままで大丈夫です。",
+              tone: "tip",
+            })}
       </section>
     `;
   }
@@ -2930,38 +3063,43 @@ class ProgramBuilder extends Component {
           <span class="phase-number">${String(phaseIndex + 1).padStart(2, "0")}</span>
           <div class="phase-fields">
             ${TextField({
-              label: "フェーズ名",
+              label: "期間の名前",
               value: phase.label,
               focusKey: `${pathKey(path)}.label`,
               onInput: value => this.update([...path, "label"], value),
             })}
             ${NumberField({
-              label: "サイクル日数",
+              label: "何日で1周？",
               value: phase.windowDays,
               nullable: true,
+              hint: "例：週単位なら7",
               focusKey: `${pathKey(path)}.windowDays`,
               onInput: value => this.update([...path, "windowDays"], value),
             })}
-            ${SelectField({
-              label: "次フェーズ",
-              value: phase.nextPhaseId || "",
-              focusKey: `${pathKey(path)}.nextPhaseId`,
-              onInput: value => this.update([...path, "nextPhaseId"], value || null),
-              children: [
-                html`<option value="">並び順どおり</option>`,
-                ...(program.phases || []).map(
-                  item => html`<option value=${item.id}>${item.label || item.id}</option>`,
-                ),
-              ],
-            })}
           </div>
-          ${this.structureActions(phasesPath, phaseIndex, "フェーズ")}
+          ${this.structureActions(phasesPath, phaseIndex, "期間")}
         </div>
+        ${AdvancedSettings({
+          title: "この期間の次に進む期間",
+          description: "通常は画面の並び順どおり",
+          className: "phase-routing-settings",
+          children: SelectField({
+            label: "終了後の行き先",
+            value: phase.nextPhaseId || "",
+            focusKey: `${pathKey(path)}.nextPhaseId`,
+            onInput: value => this.update([...path, "nextPhaseId"], value || null),
+            children: [
+              html`<option value="">次に並んでいる期間へ進む</option>`,
+              ...(program.phases || []).map(item =>
+                html`<option value=${item.id}>${item.label || item.id}</option>`),
+            ],
+          }),
+        })}
         ${(phase.days || []).map((day, dayIndex) =>
           this.renderDay(program, day, dayIndex, path, [phaseIndex]),
         )}
         ${Button({
-          children: "＋ 日を追加",
+          children: "＋ トレーニング日を追加",
           className: "wide-button dashed",
           onClick: () =>
             this.mutate(envelope =>
@@ -3177,34 +3315,33 @@ class ProgramBuilder extends Component {
 
   renderValidation(errors, coreLoading) {
     return html`
-      <aside class="validation-pane">
+      <aside id="finish-check" class="validation-pane">
         <div class="pane-title">
-          <span>
-            検証
-            <small class="validation-engine">
-              ${this.state.validationEngine === "wasm" ? "wasm ⚙︎"
-                : this.state.validationEngine === "error" ? "コア読込失敗"
-                : "コア読み込み中…"}
-            </small>
-          </span>
+          <span>仕上げチェック</span>
           <span class=${`validation-count ${errors.length ? "has-errors" : ""}`}>
-            ${coreLoading ? "…" : errors.length ? `${errors.length}件` : "OK"}
+            ${coreLoading ? "確認中" : errors.length ? `要確認 ${errors.length}` : "準備OK"}
           </span>
         </div>
         <div class="validation-scroll">
           ${coreLoading
-            ? html`<p class="validation-summary">Swiftコア(wasm)を読み込み中…</p>`
+            ? html`<div class="check-loading"><span></span><p>入力内容に問題がないか確認しています…</p></div>`
             : null}
           ${this.state.catalog || coreLoading
             ? null
             : html`
-                <p class="validation-summary">
-                  種目名は照合していません。「種目リスト」を読み込むと、アプリに無い種目名を指摘します。
-                </p>
+                <div class="catalog-nudge">
+                  <strong>アプリの種目名も確認できます</strong>
+                  <p>「その他」からアプリの種目を読み込むと、存在しない種目名を見つけられます。</p>
+                  ${Button({
+                    children: "種目を読み込む",
+                    className: "small",
+                    onClick: () => this.setState({ catalogOpen: true, catalogError: null }),
+                  })}
+                </div>
               `}
           ${errors.length
             ? html`
-                <p class="validation-summary">項目をクリックすると編集箇所へ移動します。</p>
+                <p class="validation-summary">次の項目を直すとアプリへ戻せます。クリックすると該当箇所へ移動します。</p>
                 <ol class="error-list">
                   ${errors.map(
                     (error, index) => html`
@@ -3221,17 +3358,25 @@ class ProgramBuilder extends Component {
             : html`
                 <div class="validation-ok">
                   <span>✓</span>
-                  <strong>検証OK</strong>
-                  <p>traininglogger.program v2 として有効です。</p>
+                  <strong>アプリへ戻せます</strong>
+                  <p>入力内容に問題は見つかりませんでした。</p>
                 </div>
               `}
         </div>
         ${Button({
-          children: "{ } JSONを開く",
+          children: "上級者向け：JSONを直接編集",
           className: "wide-button",
           onClick: () => this.openJSON(),
         })}
-        <p class="autosave-note">変更はこのブラウザへ自動保存されます。</p>
+        <details class="validation-technical">
+          <summary>チェック方法について</summary>
+          <p>${this.state.validationEngine === "wasm"
+            ? "TrainingLoggerと共通のSwiftコアで確認済みです。"
+            : this.state.validationEngine === "error"
+              ? "チェック機能を読み込めませんでした。ページを再読み込みしてください。"
+              : "チェック機能を読み込んでいます。"}</p>
+        </details>
+        <p class="autosave-note">編集内容は、このブラウザに自動保存されます。</p>
       </aside>
     `;
   }
@@ -3245,8 +3390,8 @@ class ProgramBuilder extends Component {
         <aside class="json-drawer" aria-label="JSONエディタ">
           <div class="drawer-heading">
             <div>
-              <span class="eyebrow">RAW DATA</span>
-              <h2>JSONを直接編集</h2>
+              <span class="eyebrow">上級者向け</span>
+              <h2>プログラムのJSONを直接編集</h2>
             </div>
             ${IconButton({
               icon: "×",
@@ -3278,7 +3423,7 @@ class ProgramBuilder extends Component {
             onInput=${event => this.setState({ jsonText: event.currentTarget.value })}
           ></textarea>
           <p class="drawer-hint">
-            貼り付けインポートにも使えます。問題がある場合は一覧を確認し、この画面で修正してください。
+            TrainingLoggerからコピーしたプログラムの貼り付けにも使えます。JSONに問題がある場合は、上の一覧を確認して修正してください。
           </p>
         </aside>
       </div>
@@ -3388,8 +3533,8 @@ class ProgramBuilder extends Component {
         <aside class="json-drawer" aria-label="種目リスト">
           <div class="drawer-heading">
             <div>
-              <span class="eyebrow">CATALOG</span>
-              <h2>種目リスト</h2>
+              <span class="eyebrow">任意の準備</span>
+              <h2>アプリの種目を読み込む</h2>
             </div>
             ${IconButton({
               icon: "×",
@@ -3398,8 +3543,8 @@ class ProgramBuilder extends Component {
             })}
           </div>
           <p class="drawer-hint">
-            アプリの 設定 → データ管理 →「Web用に種目リストをコピー」で取得したJSONを貼り付けます。
-            種目名が候補から選べるようになり、アプリに無い種目名は検証で指摘されます。
+            TrainingLoggerアプリで「設定 → データ管理 → Web用に種目リストをコピー」を選び、
+            コピーされた内容を下に貼り付けてください。種目を候補から選べるようになります。
           </p>
           ${catalog
             ? html`
@@ -3415,7 +3560,7 @@ class ProgramBuilder extends Component {
             : null}
           <div class="drawer-actions">
             ${Button({
-              children: "読み込む",
+              children: "貼り付けた種目を読み込む",
               className: "primary",
               onClick: () => this.applyCatalog(),
             })}
@@ -3465,9 +3610,10 @@ class ProgramBuilder extends Component {
               <div class="workspace">
                 ${this.renderTree(phases)}
                 <main class="editor-pane">
+                  ${this.renderStartGuide(program, errors, coreLoading)}
                   ${this.renderOverview(program)}
-                  ${this.renderVariables(program)}
                   ${this.renderSlots(program)}
+                  ${this.renderVariables(program)}
                   <datalist id="slot-id-list">
                     ${(program.slots || []).map(slot => html`<option value=${slot.id}></option>`)}
                   </datalist>
