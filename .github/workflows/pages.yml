@@ -69,12 +69,17 @@ jobs:
             echo "::warning::wasm-opt に失敗したため未最適化の wasm を公開します"
             cp "$wasm_path" core.wasm
           fi
-          # サイズは黙って増えるので毎回ログに残す。data 節が跳ねていたら
-          # Foundation 経由で ICU を巻き込んでいる (ADR-0079)
           before=$(stat -c%s "$wasm_path")
           after=$(stat -c%s core.wasm)
           gzipped=$(gzip -9 -c core.wasm | wc -c)
           echo "core.wasm: build=${before}B opt=${after}B gzip=${gzipped}B"
+          # 素の import Foundation が1つ混ざると ICU のデータ節 35MB が復活する。
+          # 現状 9MB 前後なので 16MB を上限にして黙って戻るのを防ぐ (ADR-0079)
+          limit=$((16 * 1024 * 1024))
+          if [ "$after" -gt "$limit" ]; then
+            echo "::error::core.wasm が ${limit}B を超えました。Foundation 経由で ICU を巻き込んでいないか確認してください (ADR-0079)"
+            exit 1
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
