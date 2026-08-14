@@ -329,6 +329,57 @@ function slotUsageCount(program, slotId) {
   return count;
 }
 
+function parseEditorTarget(target) {
+  const dayMatch = /^day-(\d+)-(\d+)$/.exec(target || "");
+  if (dayMatch) {
+    return {
+      kind: "day",
+      phaseIndex: Number(dayMatch[1]),
+      dayIndex: Number(dayMatch[2]),
+    };
+  }
+  const phaseMatch = /^phase-(\d+)$/.exec(target || "");
+  if (phaseMatch) {
+    return { kind: "phase", phaseIndex: Number(phaseMatch[1]) };
+  }
+  return { kind: target === "resources" ? "resources" : "overview" };
+}
+
+function editorTargetExists(program, target) {
+  const parsed = parseEditorTarget(target);
+  if (parsed.kind === "overview" || parsed.kind === "resources") return true;
+  const phase = program?.phases?.[parsed.phaseIndex];
+  if (!phase) return false;
+  return parsed.kind === "phase" || Boolean(phase.days?.[parsed.dayIndex]);
+}
+
+function dayExerciseNames(program, day) {
+  const slotById = new Map((program.slots || []).map(slot => [slot.id, slot]));
+  const names = [];
+  for (const group of day.groups || []) {
+    for (const entry of group.entries || []) {
+      for (const variant of entryVariants(entry)) {
+        const slot = slotById.get(variant.slotId);
+        const name = slot?.exerciseName || slot?.label;
+        if (name && !names.includes(name)) names.push(name);
+      }
+    }
+  }
+  return names;
+}
+
+function programDays(program) {
+  return (program.phases || []).flatMap((phase, phaseIndex) =>
+    (phase.days || []).map((day, dayIndex) => ({
+      phase,
+      phaseIndex,
+      day,
+      dayIndex,
+      key: `day-${phaseIndex}-${dayIndex}`,
+    })),
+  );
+}
+
 function overrideCase(value) {
   if (value?.value) return "value";
   if (value?.none) return "none";
@@ -620,12 +671,13 @@ class ProgramBuilder extends Component {
       catalogOpen: false,
       catalogText: "",
       catalogError: null,
-      customExerciseInputs: {},
       validationErrors: null,
       validationEngine: "loading",
       templateName: "minimal",
       status: initial.status,
       mode: this.loadInitialMode(Boolean(location.hash.match(/^#p=/))),
+      activeEditor: "day-0-0",
+      validationOpen: false,
     };
     this.lastEditGroup = null;
     this.lastEditTime = 0;
@@ -734,6 +786,12 @@ class ProgramBuilder extends Component {
       }
       document.title = `${this.state.envelope?.program?.name || "名称未設定"} — TrainingLogger`;
       this.refreshValidation(this.state.envelope);
+      if (
+        isRenderableProgram(this.state.envelope?.program) &&
+        !editorTargetExists(this.state.envelope.program, this.state.activeEditor)
+      ) {
+        this.setState({ activeEditor: "overview" });
+      }
     } else if (previousState.catalog !== this.state.catalog) {
       // 既知種目の集合が変わると指摘も変わる（ADR-0080）
       this.refreshValidation(this.state.envelope);
@@ -986,6 +1044,13 @@ class ProgramBuilder extends Component {
 
   handleKeyDown(event) {
     if (this.state.mode !== "edit") return;
+    if (event.key === "Escape") {
+      if (this.state.jsonOpen || this.state.catalogOpen || this.state.validationOpen) {
+        event.preventDefault();
+        this.setState({ jsonOpen: false, catalogOpen: false, validationOpen: false });
+      }
+      return;
+    }
     if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
     if (event.target?.dataset?.jsonEditor === "true") return;
     const key = event.key.toLowerCase();
@@ -1104,9 +1169,66 @@ class ProgramBuilder extends Component {
     }
   }
 
+  openEditor(target, options = {}) {
+    const parsed = parseEditorTarget(target);
+    const nextState = {
+      activeEditor: target,
+      validationOpen: false,
+    };
+    if (parsed.kind === "day") nextState.activeDay = target;
+    this.setState(nextState, () => {
+      requestAnimationFrame(() => {
+        const focusTarget = options.focusId
+          ? document.getElementById(options.focusId)
+          : document.getElementById("main-editor");
+        focusTarget?.scrollIntoView({
+          behavior: options.instant ? "auto" : "smooth",
+          block: "start",
+        });
+        if (options.focusId) {
+          focusTarget?.classList.add("flash");
+          setTimeout(() => focusTarget?.classList.remove("flash"), 900);
+        }
+      });
+    });
+  }
+
+  addPhase() {
+    const phaseIndex = this.state.envelope.program.phases.length;
+    const next = ui.insertItem(
+      this.state.envelope,
+      ["program", "phases"],
+      ui.createPhase(this.state.envelope),
+    );
+    this.commit(next, { message: "新しい期間を追加しました" });
+    this.setState({ activeEditor: `phase-${phaseIndex}` });
+  }
+
+  addDay(phaseIndex) {
+    const phasePath = ["program", "phases", phaseIndex];
+    const dayIndex = this.state.envelope.program.phases[phaseIndex].days.length;
+    const next = ui.insertItem(
+      this.state.envelope,
+      [...phasePath, "days"],
+      ui.createDay(this.state.envelope),
+    );
+    const dayKey = `day-${phaseIndex}-${dayIndex}`;
+    this.commit(next, { message: "トレーニング日を追加しました" });
+    this.setState({ activeEditor: dayKey, activeDay: dayKey });
+  }
+
   scrollTo(id) {
     const node = document.getElementById(id);
-    if (!node) return;
+    if (!node) {
+      if (id === "program-overview") {
+        this.openEditor("overview", { focusId: id });
+      } else if (/^phase-\d+$/.test(id) || /^day-\d+-\d+$/.test(id)) {
+        this.openEditor(id);
+      } else if (id === "exercise-setup" || id === "baseline-setup") {
+        this.openEditor("resources", { focusId: id });
+      }
+      return;
+    }
     node.scrollIntoView({ behavior: "smooth", block: "start" });
     node.classList.add("flash");
     setTimeout(() => node.classList.remove("flash"), 900);
@@ -1121,17 +1243,29 @@ class ProgramBuilder extends Component {
     const normalized = `${rawPath.startsWith("program.") ? "" : "program."}${rawPath}`
       .replaceAll("[", ".")
       .replaceAll("]", "");
-    const candidates = [...document.querySelectorAll("[data-model-path]")]
-      .filter(node => normalized.startsWith(node.dataset.modelPath))
-      .sort((left, right) => right.dataset.modelPath.length - left.dataset.modelPath.length);
-    const target = candidates[0];
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
-      target.classList.add("flash");
-      setTimeout(() => target.classList.remove("flash"), 900);
-    } else {
-      this.scrollTo("program-overview");
-    }
+    const phaseMatch = /^program\.phases\.(\d+)(?:\.days\.(\d+))?/.exec(normalized);
+    const editorTarget = normalized.startsWith("program.slots") || normalized.startsWith("program.variables")
+      ? "resources"
+      : phaseMatch?.[2] != null
+        ? `day-${phaseMatch[1]}-${phaseMatch[2]}`
+        : phaseMatch
+          ? `phase-${phaseMatch[1]}`
+          : "overview";
+    this.setState({
+      activeEditor: editorTarget,
+      activeDay: editorTarget.startsWith("day-") ? editorTarget : this.state.activeDay,
+      validationOpen: false,
+    }, () => {
+      requestAnimationFrame(() => {
+        const candidates = [...document.querySelectorAll("[data-model-path]")]
+          .filter(node => normalized.startsWith(node.dataset.modelPath))
+          .sort((left, right) => right.dataset.modelPath.length - left.dataset.modelPath.length);
+        const target = candidates[0] || document.getElementById("main-editor");
+        target?.scrollIntoView({ behavior: "smooth", block: "center" });
+        target?.classList.add("flash");
+        setTimeout(() => target?.classList.remove("flash"), 900);
+      });
+    });
   }
 
   structureActions(arrayPath, index, label, options = {}) {
@@ -1181,7 +1315,7 @@ class ProgramBuilder extends Component {
     `;
   }
 
-  renderHeader(program, errors) {
+  renderHeader(program, errors, coreLoading) {
     const readerMode = this.state.mode === "reader";
     return html`
       <header class="app-header">
@@ -1211,6 +1345,25 @@ class ProgramBuilder extends Component {
             title: "TrainingLoggerへ貼り付けるJSONをコピー",
             onClick: () => this.copyJSON(),
           })}
+          ${readerMode
+            ? null
+            : Button({
+                children: coreLoading
+                  ? "確認中"
+                  : errors.length
+                    ? `要確認 ${errors.length}`
+                    : "✓ 準備OK",
+                className: `finish-status-button ${
+                  coreLoading ? "loading" : errors.length ? "has-errors" : "is-ready"
+                }`,
+                title: "仕上げチェックを開く",
+                onClick: () => this.setState({ validationOpen: true }, () => {
+                  document.querySelector(".validation-pane")?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  });
+                }),
+              })}
           ${readerMode && errors.length
             ? Button({
                 children: `要確認 ${errors.length}件`,
@@ -1273,73 +1426,80 @@ class ProgramBuilder extends Component {
     `;
   }
 
-  renderTree(phases) {
+  renderTree(program) {
+    const phases = program.phases || [];
+    const totalDays = phases.reduce((sum, phase) => sum + (phase.days || []).length, 0);
     return html`
       <nav class="tree-pane" aria-label="プログラム構造">
         <div class="pane-title">
-          <span>編集する場所</span>
-          <span class="count-badge">${phases.length} 期間</span>
+          <span>プログラム</span>
+          <span class="count-badge">${totalDays}日</span>
         </div>
         <div class="tree-scroll">
           <div class="tree-setup">
-            <button type="button" onClick=${() => this.scrollTo("program-overview")}>
-              <span aria-hidden="true">1</span><strong>名前とメモ</strong>
+            <button
+              type="button"
+              class=${this.state.activeEditor === "overview" ? "active" : ""}
+              onClick=${() => this.openEditor("overview")}
+            >
+              <span aria-hidden="true">⌂</span><strong>全体像・名前</strong><small>概要</small>
             </button>
           </div>
-          <p class="tree-section-label">トレーニング内容</p>
+          <p class="tree-section-label">トレーニング日</p>
           ${phases.map(
             (phase, phaseIndex) => html`
               <div class="tree-phase">
                 <button
                   type="button"
-                  onClick=${() => this.scrollTo(`phase-${phaseIndex}`)}
+                  class=${this.state.activeEditor === `phase-${phaseIndex}` ? "active" : ""}
+                  onClick=${() => this.openEditor(`phase-${phaseIndex}`)}
                 >
                   <span class="tree-number">${phaseIndex + 1}</span>
                   <span>${phase.label || phase.id || "名称未設定"}</span>
+                  <small>${phase.windowDays ? `${phase.windowDays}日周期` : "期間設定"}</small>
                 </button>
                 <div class="tree-days">
                   ${(phase.days || []).map((day, dayIndex) => {
                     const dayKey = `day-${phaseIndex}-${dayIndex}`;
+                    const exercises = dayExerciseNames(program, day);
                     return html`
                       <button
                         type="button"
-                        class=${this.state.activeDay === dayKey ? "active" : ""}
-                        onClick=${() => {
-                          this.setState({ activeDay: dayKey });
-                          this.scrollTo(dayKey);
-                        }}
+                        class=${this.state.activeEditor === dayKey ? "active" : ""}
+                        onClick=${() => this.openEditor(dayKey)}
                       >
                         <span class="tree-line"></span>
                         <span>${day.label || day.id || "名称未設定"}</span>
-                        ${day.pill ? html`<small>${day.pill}</small>` : null}
+                        <small>${exercises.length ? `${exercises.length}種目` : "未設定"}</small>
                       </button>
                     `;
                   })}
+                  <button
+                    type="button"
+                    class="tree-add-day"
+                    onClick=${() => this.addDay(phaseIndex)}
+                  >
+                    <span aria-hidden="true">＋</span><span>日を追加</span>
+                  </button>
                 </div>
               </div>
             `,
           )}
-          <p class="tree-section-label tree-detail-label">必要なときだけ</p>
+          <p class="tree-section-label tree-detail-label">共通の詳細設定</p>
           <div class="tree-setup tree-details">
-            <button type="button" onClick=${() => this.scrollTo("exercise-setup")}>
-              <span aria-hidden="true">⋯</span><strong>種目の共通設定</strong>
-            </button>
-            <button type="button" onClick=${() => this.scrollTo("baseline-setup")}>
-              <span aria-hidden="true">%</span><strong>割合計算の基準値</strong>
+            <button
+              type="button"
+              class=${this.state.activeEditor === "resources" ? "active" : ""}
+              onClick=${() => this.openEditor("resources")}
+            >
+              <span aria-hidden="true">⚙</span><strong>種目・基準値</strong><small>詳細</small>
             </button>
           </div>
         </div>
         ${Button({
           children: "＋ 新しい期間を追加",
           className: "wide-button",
-          onClick: () =>
-            this.mutate(envelope =>
-              ui.insertItem(
-                envelope,
-                ["program", "phases"],
-                ui.createPhase(envelope),
-              ),
-            ),
+          onClick: () => this.addPhase(),
         })}
       </nav>
     `;
@@ -1354,9 +1514,10 @@ class ProgramBuilder extends Component {
       (phase.days || []).some(day => (day.groups || []).length > 0),
     );
     const checked = !coreLoading && errors.length === 0;
+    const firstDayTarget = programDays(program)[0]?.key || "phase-0";
     const steps = [
       ["program-overview", "1", "名前をつける", "何のためのプログラムかを書く", hasName],
-      ["phase-0", "2", "メニューを作る", "種目名もセット・回数・重量もここで入力", hasExercise && hasMenu],
+      [firstDayTarget, "2", "メニューを作る", "種目名もセット・回数・重量もここで入力", hasExercise && hasMenu],
       ["finish-check", "3", "仕上げを確認", "問題がなければアプリへ戻す", checked],
     ];
     return html`
@@ -1416,6 +1577,184 @@ class ProgramBuilder extends Component {
           })}
         </div>
       </section>
+    `;
+  }
+
+  renderProgramMap(program) {
+    return html`
+      <section class="editor-card program-map" aria-labelledby="program-map-title">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">WORKOUT MAP</span>
+            <h2 id="program-map-title">作る日を選ぶ</h2>
+            <p>1日ずつ開くので、長いフォームを探し回る必要はありません。</p>
+          </div>
+          ${Button({
+            children: "＋ 期間を追加",
+            className: "small",
+            onClick: () => this.addPhase(),
+          })}
+        </div>
+        <div class="program-map-phases">
+          ${(program.phases || []).map((phase, phaseIndex) => html`
+            <article class="program-map-phase">
+              <div class="program-map-phase-heading">
+                <button type="button" onClick=${() => this.openEditor(`phase-${phaseIndex}`)}>
+                  <span>${String(phaseIndex + 1).padStart(2, "0")}</span>
+                  <strong>${phase.label || "名称未設定の期間"}</strong>
+                  <small>${phase.windowDays ? `${phase.windowDays}日で1周` : "周期未設定"}</small>
+                </button>
+                ${Button({
+                  children: "＋ 日を追加",
+                  className: "small",
+                  onClick: () => this.addDay(phaseIndex),
+                })}
+              </div>
+              <div class="program-map-days">
+                ${(phase.days || []).map((day, dayIndex) => {
+                  const names = dayExerciseNames(program, day);
+                  return html`
+                    <button
+                      type="button"
+                      class="program-map-day"
+                      onClick=${() => this.openEditor(`day-${phaseIndex}-${dayIndex}`)}
+                    >
+                      <span class="program-map-day-index">DAY ${dayIndex + 1}</span>
+                      <strong>${day.label || "名称未設定の日"}</strong>
+                      <span class="program-map-day-summary">
+                        ${names.length ? names.slice(0, 3).join("・") : "種目を追加してください"}
+                        ${names.length > 3 ? ` ほか${names.length - 3}種目` : ""}
+                      </span>
+                      <span class="program-map-day-meta">
+                        ${(day.groups || []).length}ブロック · ${names.length}種目
+                      </span>
+                    </button>
+                  `;
+                })}
+                ${(phase.days || []).length
+                  ? null
+                  : html`
+                      <button
+                        type="button"
+                        class="program-map-day empty"
+                        onClick=${() => this.addDay(phaseIndex)}
+                      >
+                        <strong>最初のトレーニング日を追加</strong>
+                        <span>ここからメニュー作りを始めます</span>
+                      </button>
+                    `}
+              </div>
+            </article>
+          `)}
+        </div>
+      </section>
+    `;
+  }
+
+  renderDayWorkspace(program, phaseIndex, dayIndex) {
+    const phase = program.phases?.[phaseIndex];
+    const day = phase?.days?.[dayIndex];
+    if (!phase || !day) return this.renderOverviewWorkspace(program);
+    const days = programDays(program);
+    const currentIndex = days.findIndex(item => item.key === `day-${phaseIndex}-${dayIndex}`);
+    const previous = days[currentIndex - 1];
+    const next = days[currentIndex + 1];
+    return html`
+      <div class="focused-workspace">
+        <section class="focus-header" aria-label="現在の編集場所">
+          <div class="focus-breadcrumbs">
+            <button type="button" onClick=${() => this.openEditor("overview")}>全体像</button>
+            <span aria-hidden="true">›</span>
+            <button type="button" onClick=${() => this.openEditor(`phase-${phaseIndex}`)}>
+              ${phase.label || `期間 ${phaseIndex + 1}`}
+            </button>
+            <span aria-hidden="true">›</span>
+            <strong>${day.label || `Day ${dayIndex + 1}`}</strong>
+          </div>
+          <div class="focus-header-main">
+            <div>
+              <span class="eyebrow">NOW EDITING</span>
+              <h1>${day.label || `トレーニング日 ${dayIndex + 1}`}</h1>
+              <p>種目 → セット・回数・重量の順に、上から決めれば完成します。</p>
+            </div>
+            <div class="focus-navigation" aria-label="トレーニング日の移動">
+              ${Button({
+                children: "← 前の日",
+                className: "small",
+                disabled: !previous,
+                onClick: () => previous && this.openEditor(previous.key),
+              })}
+              <span>${currentIndex + 1} / ${days.length}</span>
+              ${Button({
+                children: "次の日 →",
+                className: "small",
+                disabled: !next,
+                onClick: () => next && this.openEditor(next.key),
+              })}
+            </div>
+          </div>
+        </section>
+        ${this.renderDay(
+          program,
+          day,
+          dayIndex,
+          ["program", "phases", phaseIndex],
+          [phaseIndex],
+        )}
+        <nav class="focus-footer" aria-label="次の編集場所">
+          ${previous
+            ? Button({
+                children: `← ${previous.day.label || `Day ${previous.dayIndex + 1}`}`,
+                onClick: () => this.openEditor(previous.key),
+              })
+            : html`<span></span>`}
+          ${next
+            ? Button({
+                children: `${next.day.label || `Day ${next.dayIndex + 1}`} →`,
+                className: "primary",
+                onClick: () => this.openEditor(next.key),
+              })
+            : Button({
+                children: "期間設定と自動調整へ →",
+                className: "primary",
+                onClick: () => this.openEditor(`phase-${phaseIndex}`),
+              })}
+        </nav>
+      </div>
+    `;
+  }
+
+  renderOverviewWorkspace(program) {
+    return html`
+      ${this.renderStartGuide(
+        program,
+        this.state.validationErrors ?? [],
+        this.state.validationErrors === null,
+      )}
+      ${this.renderOverview(program)}
+      ${this.renderProgramMap(program)}
+    `;
+  }
+
+  renderResourcesWorkspace(program) {
+    return html`
+      <section class="focus-header settings-focus-header">
+        <div class="focus-breadcrumbs">
+          <button type="button" onClick=${() => this.openEditor("overview")}>全体像</button>
+          <span aria-hidden="true">›</span>
+          <strong>共通の詳細設定</strong>
+        </div>
+        <div class="focus-header-main">
+          <div>
+            <span class="eyebrow">SHARED SETTINGS</span>
+            <h1>種目と基準値</h1>
+            <p>通常のメニュー作りでは触らなくて大丈夫です。条件指定や割合計算を使うときに編集します。</p>
+          </div>
+          ${Button({ children: "トレーニング日に戻る", onClick: () => this.openEditor(this.state.activeDay) })}
+        </div>
+      </section>
+      ${this.renderSlots(program)}
+      ${this.renderVariables(program)}
     `;
   }
 
@@ -1851,73 +2190,66 @@ class ProgramBuilder extends Component {
     const candidates = this.state.catalog
       ? catalogModel.candidateNames(this.state.catalog, kind)
       : [];
-    const known = candidates.includes(slot.exerciseName);
-    const customOpen =
-      !this.state.catalog ||
-      Boolean(slot.exerciseName && !known) ||
-      Boolean(this.state.customExerciseInputs[focusKey]);
     const usageCount = slotUsageCount(program, slot.id);
 
     return html`
       <div class="inline-exercise-picker">
+        ${TextField({
+          label: "行う種目",
+          value: slot.exerciseName,
+          nullable: true,
+          placeholder: "例：ベンチプレス",
+          focusKey,
+          list: this.state.catalog ? exerciseListId(kind) : "",
+          hint: this.state.catalog
+            ? "入力しても、下の一覧から押しても選べます"
+            : "ここへ名前を直接入力するだけで使えます",
+          onInput: value => this.setExerciseName(slotPath, value, { syncLabel: true }),
+        })}
+        ${this.exerciseNameHint(slot, kind)}
         ${this.state.catalog
           ? html`
-              <label class="field select-field">
-                <span>行う種目</span>
-                <select
-                  value=${known ? slot.exerciseName : customOpen ? "__custom__" : ""}
-                  onInput=${event => {
-                    const value = event.currentTarget.value;
-                    if (value === "__custom__") {
-                      this.setState(state => ({
-                        customExerciseInputs: {
-                          ...state.customExerciseInputs,
-                          [focusKey]: true,
-                        },
-                      }), () => this.focusSoon(focusKey));
-                      return;
-                    }
-                    this.setState(state => ({
-                      customExerciseInputs: {
-                        ...state.customExerciseInputs,
-                        [focusKey]: false,
-                      },
-                    }));
-                    this.setExerciseName(slotPath, value || null, { syncLabel: true });
-                  }}
-                >
-                  <option value="">アプリで使うときに選ぶ</option>
-                  ${candidates.map(name => html`<option value=${name}>${name}</option>`)}
-                  <option value="__custom__">一覧にない名前を直接入力…</option>
-                </select>
-                <small class="input-hint">クリックするとアプリの種目が一覧で出ます</small>
-              </label>
-              ${customOpen
-                ? TextField({
-                    label: "種目名を直接入力",
-                    value: slot.exerciseName,
-                    nullable: true,
-                    placeholder: "例：ベンチプレス",
-                    focusKey,
-                    onInput: value => this.setExerciseName(slotPath, value, { syncLabel: true }),
-                  })
-                : null}
+              <details class="catalog-browser">
+                <summary>
+                  <span>アプリの種目から選ぶ</span>
+                  <small>${candidates.length}件 · 入力不要</small>
+                </summary>
+                <div class="catalog-browser-options" role="listbox" aria-label="アプリの種目">
+                  <button
+                    type="button"
+                    class=${slot.exerciseName ? "catalog-option clear" : "catalog-option active clear"}
+                    onClick=${event => {
+                      closeContainingDetails(event);
+                      this.setExerciseName(slotPath, null, { syncLabel: true });
+                    }}
+                  >
+                    <span>あとでアプリ上で選ぶ</span>
+                    ${slot.exerciseName ? null : html`<small>選択中</small>`}
+                  </button>
+                  ${candidates.map(name => html`
+                    <button
+                      type="button"
+                      class=${slot.exerciseName === name ? "catalog-option active" : "catalog-option"}
+                      role="option"
+                      aria-selected=${slot.exerciseName === name}
+                      onClick=${event => {
+                        closeContainingDetails(event);
+                        this.setExerciseName(slotPath, name, { syncLabel: true });
+                      }}
+                    >
+                      <span>${name}</span>
+                      ${slot.exerciseName === name ? html`<small>✓ 選択中</small>` : null}
+                    </button>
+                  `)}
+                </div>
+              </details>
             `
           : html`
-              ${TextField({
-                label: "行う種目",
-                value: slot.exerciseName,
-                nullable: true,
-                placeholder: "ここに種目名を直接入力",
-                focusKey,
-                hint: "入力した名前はメニュー表示にも自動で反映します",
-                onInput: value => this.setExerciseName(slotPath, value, { syncLabel: true }),
-              })}
               <button
                 type="button"
                 class="catalog-inline-button"
                 onClick=${() => this.setState({ catalogOpen: true, catalogError: null })}
-              >アプリの種目から選べるようにする</button>
+              >アプリの種目を一覧から選べるようにする</button>
             `}
         ${usageCount > 1
           ? html`
@@ -3265,11 +3597,31 @@ class ProgramBuilder extends Component {
     const phasesPath = ["program", "phases"];
     const path = [...phasesPath, phaseIndex];
     return html`
-      <section
-        id=${`phase-${phaseIndex}`}
-        class="phase-card"
-        data-model-path=${pathKey(path)}
-      >
+      <div class="focused-workspace">
+        <section class="focus-header phase-focus-header" aria-label="期間の設定">
+          <div class="focus-breadcrumbs">
+            <button type="button" onClick=${() => this.openEditor("overview")}>全体像</button>
+            <span aria-hidden="true">›</span>
+            <strong>${phase.label || `期間 ${phaseIndex + 1}`}</strong>
+          </div>
+          <div class="focus-header-main">
+            <div>
+              <span class="eyebrow">PHASE SETTINGS</span>
+              <h1>期間の流れと自動調整</h1>
+              <p>トレーニング日は個別に編集し、ここでは周期と1周後の動きを決めます。</p>
+            </div>
+            ${Button({
+              children: "＋ トレーニング日を追加",
+              className: "primary",
+              onClick: () => this.addDay(phaseIndex),
+            })}
+          </div>
+        </section>
+        <section
+          id=${`phase-${phaseIndex}`}
+          class="phase-card phase-settings-card"
+          data-model-path=${pathKey(path)}
+        >
         <div class="phase-heading">
           <span class="phase-number">${String(phaseIndex + 1).padStart(2, "0")}</span>
           <div class="phase-fields">
@@ -3306,19 +3658,38 @@ class ProgramBuilder extends Component {
             ],
           }),
         })}
-        ${(phase.days || []).map((day, dayIndex) =>
-          this.renderDay(program, day, dayIndex, path, [phaseIndex]),
-        )}
-        ${Button({
-          children: "＋ トレーニング日を追加",
-          className: "wide-button dashed",
-          onClick: () =>
-            this.mutate(envelope =>
-              ui.insertItem(envelope, [...path, "days"], ui.createDay(envelope)),
-            ),
-        })}
+        <section class="phase-day-overview" aria-label="この期間のトレーニング日">
+          <div class="subheading">
+            <div>
+              <strong>この期間のトレーニング日</strong>
+              <small>編集したい日を選ぶと、その日のメニューだけを開きます。</small>
+            </div>
+          </div>
+          <div class="phase-day-list">
+            ${(phase.days || []).map((day, dayIndex) => {
+              const names = dayExerciseNames(program, day);
+              return html`
+                <button
+                  type="button"
+                  onClick=${() => this.openEditor(`day-${phaseIndex}-${dayIndex}`)}
+                >
+                  <span>${String(dayIndex + 1).padStart(2, "0")}</span>
+                  <strong>${day.label || `Day ${dayIndex + 1}`}</strong>
+                  <small>${names.length ? names.join("・") : "種目未設定"}</small>
+                  <b aria-hidden="true">→</b>
+                </button>
+              `;
+            })}
+          </div>
+          ${Button({
+            children: "＋ トレーニング日を追加",
+            className: "wide-button dashed",
+            onClick: () => this.addDay(phaseIndex),
+          })}
+        </section>
         ${this.renderRules(program, phase, phaseIndex, path)}
-      </section>
+        </section>
+      </div>
     `;
   }
 
@@ -3526,12 +3897,21 @@ class ProgramBuilder extends Component {
 
   renderValidation(errors, coreLoading) {
     return html`
-      <aside id="finish-check" class="validation-pane">
+      <aside
+        id="finish-check"
+        class=${`validation-pane ${this.state.validationOpen ? "open" : ""}`}
+        aria-label="仕上げチェック"
+      >
         <div class="pane-title">
           <span>仕上げチェック</span>
           <span class=${`validation-count ${errors.length ? "has-errors" : ""}`}>
             ${coreLoading ? "確認中" : errors.length ? `要確認 ${errors.length}` : "準備OK"}
           </span>
+          ${IconButton({
+            icon: "×",
+            label: "仕上げチェックを閉じる",
+            onClick: () => this.setState({ validationOpen: false }),
+          })}
         </div>
         <div class="validation-scroll">
           ${coreLoading
@@ -3800,6 +4180,21 @@ class ProgramBuilder extends Component {
     `;
   }
 
+  renderCurrentEditor(program) {
+    const target = editorTargetExists(program, this.state.activeEditor)
+      ? this.state.activeEditor
+      : "overview";
+    const parsed = parseEditorTarget(target);
+    if (parsed.kind === "resources") return this.renderResourcesWorkspace(program);
+    if (parsed.kind === "phase") {
+      return this.renderPhase(program, program.phases[parsed.phaseIndex], parsed.phaseIndex);
+    }
+    if (parsed.kind === "day") {
+      return this.renderDayWorkspace(program, parsed.phaseIndex, parsed.dayIndex);
+    }
+    return this.renderOverviewWorkspace(program);
+  }
+
   render() {
     const envelope = this.state.envelope;
     const candidateProgram = envelope?.program;
@@ -3807,52 +4202,26 @@ class ProgramBuilder extends Component {
     // null = Swiftコア読み込み中(検証結果なし)
     const errors = this.state.validationErrors ?? [];
     const coreLoading = this.state.validationErrors === null;
-    const phases = program?.phases || [];
     return html`
       <div class=${`app-shell ${this.state.mode === "reader" ? "reader-mode" : "edit-mode"}`}>
-        ${this.renderHeader(program, errors)}
+        ${this.renderHeader(program, errors, coreLoading)}
         ${this.state.status
-          ? html`<div class=${`toast ${this.state.status.kind}`}>${this.state.status.text}</div>`
+          ? html`<div class=${`toast ${this.state.status.kind}`} role="status" aria-live="polite">${this.state.status.text}</div>`
           : null}
         ${program
           ? this.state.mode === "reader"
             ? this.renderReader(program)
             : html`
               <div class="workspace">
-                ${this.renderTree(phases)}
-                <main class="editor-pane">
-                  ${this.renderStartGuide(program, errors, coreLoading)}
-                  ${this.renderOverview(program)}
+                ${this.renderTree(program)}
+                <main id="main-editor" class="editor-pane" tabindex="-1">
                   <datalist id="slot-id-list">
                     ${(program.slots || []).map(slot => html`<option value=${slot.id}></option>`)}
                   </datalist>
                   <datalist id="extra-field-key-list">
                     ${EXTRA_FIELD_KEYS.map(fieldKey => html`<option value=${fieldKey}></option>`)}
                   </datalist>
-                  ${phases.map((phase, phaseIndex) =>
-                    this.renderPhase(program, phase, phaseIndex),
-                  )}
-                  ${phases.length
-                    ? null
-                    : html`
-                        <section class="editor-card empty-program">
-                          ${EmptyHint({ children: "フェーズがありません。" })}
-                          ${Button({
-                            children: "フェーズを追加",
-                            className: "primary",
-                            onClick: () =>
-                              this.mutate(current =>
-                                ui.insertItem(
-                                  current,
-                                  ["program", "phases"],
-                                  ui.createPhase(current),
-                                ),
-                              ),
-                          })}
-                        </section>
-                  `}
-                  ${this.renderSlots(program)}
-                  ${this.renderVariables(program)}
+                  ${this.renderCurrentEditor(program)}
                 </main>
                 ${this.renderValidation(errors, coreLoading)}
               </div>
