@@ -40,7 +40,9 @@ public enum CoreValidation {
         } catch let error as DecodingError {
             return [describe(error)]
         } catch {
-            return ["JSONとして読めません: \(error.localizedDescription)"]
+            // localizedDescription は Foundation 依存のため使わない（ADR-0079）。
+            // JSONDecoder の失敗は上の DecodingError 分岐でほぼ拾える。
+            return ["JSONとして読めません: \(error)"]
         }
         guard envelope.format == "traininglogger.program" else {
             return ["format が \(envelope.format)（traininglogger.program を期待）"]
@@ -79,12 +81,12 @@ public enum CoreValidation {
         var findings: [String] = []
         var ids = Set<String>()
         for definition in definitions {
-            if definition.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if definition.id.trimmedWhitespace().isEmpty {
                 findings.append("同梱種目のIDが空です: \(definition.name)")
             } else if !ids.insert(definition.id).inserted {
                 findings.append("同梱種目のIDが重複しています: \(definition.id)")
             }
-            if definition.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if definition.name.trimmedWhitespace().isEmpty {
                 findings.append("同梱種目の名前が空です: \(definition.id)")
             }
             switch definition.definition {
@@ -272,7 +274,7 @@ public enum CoreValidation {
             require(value.load, .load, "重量")
             require(value.relativeLoad?.multiplier, .ratio, "相対重量")
             if let relativeLoad = value.relativeLoad,
-               relativeLoad.baselineKey.trimmingCharacters(in: .whitespacesAndNewlines)
+               relativeLoad.baselineKey.trimmedWhitespace()
                 .isEmpty {
                 findings.append("\(label)の相対重量には基準キーが必要です")
             }
@@ -286,11 +288,11 @@ public enum CoreValidation {
                 require(pace, .pace, "ペース")
             case .relativeToBaseline(let key, let speedMultiplier):
                 require(speedMultiplier, .ratio, "相対ペース")
-                if key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if key.trimmedWhitespace().isEmpty {
                     findings.append("\(label)の相対ペースには基準キーが必要です")
                 }
             case .zone(let key):
-                if key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if key.trimmedWhitespace().isEmpty {
                     findings.append("\(label)のペースゾーンにはキーが必要です")
                 }
             case .open:

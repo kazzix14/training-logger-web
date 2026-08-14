@@ -673,7 +673,7 @@ public enum ProgramBuilderCompiler {
     }
 
     private static func normalizedNote(_ note: String?) -> String? {
-        let trimmed = note?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = note?.trimmedWhitespace()
         return (trimmed?.isEmpty ?? true) ? nil : trimmed
     }
 

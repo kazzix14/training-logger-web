@@ -106,12 +106,12 @@ private struct Validator {
         var keys = Set<String>()
         for (index, input) in program.inputs.enumerated() {
             let path = "inputs[\(index)]"
-            if input.key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if input.key.trimmedWhitespace().isEmpty {
                 add(path, "変数IDが空です")
             } else if !keys.insert(input.key).inserted {
                 add(path, "変数ID「\(input.key)」が重複しています")
             }
-            if input.unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            if input.unit.trimmedWhitespace().isEmpty,
                input.dimension != .scalar {
                 add(path, "\(input.dimension.rawValue) の表示単位が空です")
             }
